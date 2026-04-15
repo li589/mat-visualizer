@@ -76,3 +76,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Development (仅供开发使用，不发布)
+.env.example
+DEPLOYMENT.md
+GIT_GUIDE.md
+test_files/*.mat
