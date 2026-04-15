@@ -7,8 +7,8 @@ import os
 import tempfile
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import Optional, Tuple
-from pathlib import Path
 
 try:
     import paramiko
@@ -114,23 +114,14 @@ class FileLoader:
         if not ssh_path.endswith(".mat"):
             raise ValueError("仅支持 .mat 文件")
 
-        ssh_path = ssh_path[6:]
-        if "@" in ssh_path:
-            user_host, remote_path = ssh_path.split("@", 1)
-            user = user_host
-        else:
-            raise ValueError("SSH路径格式错误，应为 ssh://user@host:port/path/to/file.mat")
+        parsed = urllib.parse.urlparse(ssh_path)
+        user = parsed.username
+        host = parsed.hostname
+        port = parsed.port or 22
+        remote_path = urllib.parse.unquote(parsed.path or "")
 
-        if ":" in remote_path:
-            host_port, remote_path = remote_path.split(":", 1)
-            if ":" in host_port:
-                host, port = host_port.rsplit(":", 1)
-                port = int(port)
-            else:
-                host = host_port
-                port = 22
-        else:
-            raise ValueError("SSH路径格式错误，缺少端口号或路径")
+        if not user or not host or not remote_path:
+            raise ValueError("SSH路径格式错误，应为 ssh://user@host:port/path/to/file.mat")
 
         filename = os.path.basename(remote_path)
         cache_path = os.path.join(self.cache_dir, filename)
@@ -142,8 +133,14 @@ class FileLoader:
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(host, port=port, username=user, password=password, 
-                       key_filename=key_filename, timeout=timeout)
+            ssh.connect(
+                host,
+                port=port,
+                username=user,
+                password=password,
+                key_filename=key_filename,
+                timeout=timeout
+            )
 
             sftp = ssh.open_sftp()
             sftp.get(remote_path, cache_path)
@@ -181,34 +178,16 @@ def parse_source(source: str) -> dict:
     elif source.startswith("http://"):
         return {"type": "http", "source": source, "info": {"url": source}}
     elif source.startswith("ssh://"):
-        ssh_path = source[6:]
-        if "@" in ssh_path:
-            user_host, path = ssh_path.split("@", 1)
-            user = user_host
-        else:
-            user = None
-            path = ssh_path
-
-        if ":" in path:
-            host_port, remote_path = path.split(":", 1)
-            if ":" in host_port:
-                host, port = host_port.rsplit(":", 1)
-                port = int(port)
-            else:
-                host = host_port
-                port = 22
-        else:
-            host = path
-            port = 22
-            remote_path = None
+        parsed = urllib.parse.urlparse(source)
+        remote_path = urllib.parse.unquote(parsed.path or "") or None
 
         return {
             "type": "ssh",
             "source": source,
             "info": {
-                "user": user,
-                "host": host,
-                "port": port,
+                "user": parsed.username,
+                "host": parsed.hostname,
+                "port": parsed.port or 22,
                 "path": remote_path
             }
         }

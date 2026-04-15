@@ -1,0 +1,31 @@
+# 自动检测文本文件并处理换行符
+* text=auto
+
+# 明确声明使用 LF 换行符的文件（Unix 风格）
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件使用原生换行符
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mat binary
+*.pdf binary
+*.exe binary
+*.dll binary
+*.so binary
+*.pyc binary
+*.whl binary
+*.egg binary

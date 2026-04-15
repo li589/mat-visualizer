@@ -1,171 +1,168 @@
 """
-MAT 文件可视化工具 - Flask 后端（性能优化版）
-启动：python app.py
-访问：http://127.0.0.1:5000
-优化：LRU 缓存、懒加载、内存管理、进度反馈、分页 API
-安全：输入验证、XSS 防护、路径遍历防护、速率限制
+MAT 文件可视化工具 - Flask 应用主入口（重构版 v2.0）
+
+架构说明:
+- 服务层：services/ 提供业务逻辑
+- 核心层：core/ 提供基础功能（缓存、解析、导出）
+- 安全层：security.py 提供安全验证
+- 工具层：file_loader.py 提供文件加载
+
+启动方式:
+    python app.py
+
+访问地址:
+    http://127.0.0.1:5000
 """
 
 import os
-import io
-import csv
 import time
-import tempfile
 import logging
-import numpy as np
-from collections import OrderedDict
-from flask import Flask, render_template, request, jsonify, Response, send_file
+from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
-from mat_parser import load_mat_file, get_file_info, get_summary, load_variable_data, clear_memory
-from file_loader import FileLoader, parse_source
-from security import (
-    sanitize_string, validate_var_name, validate_filename,
-    safe_path_join, validate_json_request, rate_limit,
-    validate_file_size, sanitize_url, escape_html
-)
 
-try:
-    import openpyxl
-    HAS_OPENPYXL = True
-except ImportError:
-    HAS_OPENPYXL = False
+from core import Config
+from services import FileService, DataService
+from security import (
+    validate_filename, validate_var_name, validate_file_size,
+    sanitize_url, escape_html, rate_limit, validate_json_request
+)
+from file_loader import FileLoader, parse_source
 
 # 配置日志
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
-app.config["SECRET_KEY"] = os.urandom(24)  # 用于会话安全
+# 初始化 Flask 应用
+app = Flask(__name__, template_folder="frontend/html", static_folder="frontend", static_url_path="")
+Config.init_app(app)
 
-UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "mat_uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
+# 初始化服务
+file_service = FileService()
+data_service = DataService()
 file_loader = FileLoader()
 
 
-class LRUCache:
-    """LRU缓存：限制内存占用，自动淘汰旧数据"""
-
-    def __init__(self, max_size: int = 3, max_memory_mb: int = 500):
-        self.cache = OrderedDict()
-        self.max_size = max_size
-        self.max_memory_mb = max_memory_mb
-
-    def get(self, key):
-        if key in self.cache:
-            self.cache.move_to_end(key)
-            return self.cache[key]
-        return None
-
-    def put(self, key, value):
-        if key in self.cache:
-            self.cache.move_to_end(key)
-        self.cache[key] = value
-        while len(self.cache) > self.max_size:
-            self.cache.popitem(last=False)
-
-    def clear(self):
-        self.cache.clear()
-        clear_memory()
-
-    def get_current(self):
-        if self.cache:
-            last_key = next(reversed(self.cache))
-            return self.cache[last_key]
-        return None
+def format_size_human(file_size: int) -> str:
+    if file_size < 1024:
+        return f"{file_size} B"
+    if file_size < 1024 * 1024:
+        return f"{file_size / 1024:.2f} KB"
+    if file_size < 1024 * 1024 * 1024:
+        return f"{file_size / (1024 * 1024):.2f} MB"
+    return f"{file_size / (1024 * 1024 * 1024):.2f} GB"
 
 
-_cache = LRUCache(max_size=3, max_memory_mb=500)
+def build_var_overview(mat_data):
+    var_overview = {}
+    for name, var in mat_data.items():
+        var_overview[name] = {
+            "type": var.var_type,
+            "dtype": var.dtype,
+            "shape": var.shape,
+            "size": var.size,
+            "lazy": var.lazy,
+        }
+    return var_overview
 
+
+# ==================== 路由定义 ====================
 
 @app.route("/")
 def index():
+    """渲染主页"""
     return render_template("index.html")
 
 
 @app.route("/upload", methods=["POST"])
-@rate_limit(max_requests=20, window_seconds=60)  # 每分钟最多 20 次上传
+@rate_limit(max_requests=Config.RATE_LIMIT_UPLOAD, window_seconds=60)
 def upload():
-    """上传 .mat 文件并解析（仅解析元数据，不加载大数组）"""
+    """
+    上传 MAT 文件
+    
+    Returns:
+        JSON 响应，包含文件信息和变量列表
+    """
     if "file" not in request.files:
         return jsonify({"error": "未选择文件"}), 400
 
     file = request.files["file"]
     original_filename = file.filename
-    
+
     # 验证文件名
-    if not original_filename or not validate_filename(original_filename):
+    if not validate_filename(original_filename):
         logger.warning(f"无效的文件名：{original_filename}")
         return jsonify({"error": "无效的文件名"}), 400
-    
+
     if not original_filename.endswith(".mat"):
         return jsonify({"error": "仅支持 .mat 文件"}), 400
-    
-    # 验证文件大小
-    if not validate_file_size(file, max_size_mb=500):
-        return jsonify({"error": "文件大小超过限制（500MB）"}), 400
 
-    # 安全地处理文件名
-    filename = secure_filename(original_filename)
-    filepath = safe_path_join(UPLOAD_DIR, filename)
-    
-    if not filepath:
-        logger.error("路径遍历攻击检测")
-        return jsonify({"error": "无效的文件路径"}), 400
-    
-    file.save(filepath)
+    # 验证文件大小
+    if not validate_file_size(file, max_size_mb=Config.MAX_CONTENT_LENGTH_MB):
+        return jsonify({"error": f"文件大小超过限制（{Config.MAX_CONTENT_LENGTH_MB}MB）"}), 400
 
     try:
+        # 保存文件
+        filename = secure_filename(original_filename)
+        filepath, _ = file_service.save_uploaded_file(file, filename)
+
+        # 获取文件大小
+        file_size = os.path.getsize(filepath)
+        size_human = format_size_human(file_size)
+
+        # 检测 MAT 文件版本
+        from core.parser import MATParser
+        mat_version = MATParser.detect_mat_version(filepath)
+
+        # 加载和解析文件
         start_time = time.time()
-        file_info = get_file_info(filepath)
-        file_info["filepath"] = filepath
-        file_info["source"] = filepath
-        mat_data = load_mat_file(filepath, lazy=True)
+        mat_data = data_service.load_file(filepath, lazy=True)
 
         if not mat_data:
-            if os.path.exists(filepath):
-                os.remove(filepath)
+            logger.warning(f"文件未解析到变量：{filename}")
             return jsonify({
                 "success": True,
-                "info": file_info,
+                "info": {
+                    "filename": filename,
+                    "filepath": filepath,
+                    "size_human": size_human,
+                    "mat_version": mat_version,
+                    "num_variables": 0,
+                    "variable_names": [],
+                },
                 "summary": "该文件不包含可解析的变量",
                 "variables": [],
                 "var_overview": {},
                 "parse_time": 0,
-                "warning": "文件中没有可显示的变量",
             }), 200
 
-        summary = get_summary(mat_data)
+        # 构建响应
         parse_time = time.time() - start_time
+        var_overview = build_var_overview(mat_data)
 
-        _cache.put(filename, {
-            "filepath": filepath,
-            "filename": filename,
-            "info": file_info,
-            "data": mat_data,
-            "summary": summary,
-            "parse_time": round(parse_time, 2),
-        })
-
-        var_overview = {}
-        for name, info in mat_data.items():
-            var_overview[name] = {
-                "type": info.get("type"),
-                "dtype": info.get("dtype", ""),
-                "shape": info.get("shape", []),
-                "size": info.get("size", 0),
-                "lazy": info.get("lazy", False),
-            }
+        logger.info(f"文件上传成功：{filename}, 变量数：{len(mat_data)}, 耗时：{parse_time:.2f}s")
 
         return jsonify({
             "success": True,
-            "info": file_info,
-            "summary": summary,
+            "info": {
+                "filename": filename,
+                "filepath": filepath,
+                "size_human": size_human,
+                "mat_version": mat_version,
+                "num_variables": len(mat_data),
+                "variable_names": list(mat_data.keys()),
+            },
+            "summary": f"共 {len(mat_data)} 个变量",
             "variables": list(mat_data.keys()),
             "var_overview": var_overview,
             "parse_time": round(parse_time, 2),
         })
+
+    except ValueError as e:
+        logger.error(f"上传验证失败：{e}")
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"上传处理失败：{e}", exc_info=True)
         return jsonify({"error": f"解析失败：{escape_html(str(e))}"}), 500
@@ -173,13 +170,19 @@ def upload():
 
 @app.route("/load_remote", methods=["POST"])
 @validate_json_request(['source'])
-@rate_limit(max_requests=10, window_seconds=60)  # 每分钟最多 10 次远程加载
+@rate_limit(max_requests=Config.RATE_LIMIT_REMOTE, window_seconds=60)
 def load_remote():
-    """加载远程文件（HTTP/HTTPS/SSH）"""
+    """
+    加载远程文件（HTTP/HTTPS/SSH）
+    
+    Returns:
+        JSON 响应，包含文件信息和变量列表
+    """
     req = request.get_json() or {}
     source = req.get("source", "").strip()
+    password = req.get("password")
 
-    # 验证和清理 URL
+    # 验证 URL
     if source.startswith(("http://", "https://")):
         sanitized_source = sanitize_url(source)
         if not sanitized_source:
@@ -198,452 +201,252 @@ def load_remote():
 
     try:
         start_time = time.time()
-        filepath, is_temp = file_loader.load(
-            source,
-            password=sanitize_string(req.get("password", ""), max_length=100),
-            key_filename=sanitize_string(req.get("key_filename", ""), max_length=255),
-            timeout=min(int(req.get("timeout", 60)), 300)  # 最大 5 分钟
-        )
+        # 加载远程文件
+        local_path, _ = file_loader.load(source, password=password)
+        filename = os.path.basename(local_path)
+        file_size = os.path.getsize(local_path)
+        size_human = format_size_human(file_size)
+        from core.parser import MATParser
+        mat_version = MATParser.detect_mat_version(local_path)
 
-        file_info = get_file_info(filepath)
-        file_info["filepath"] = filepath
-        file_info["source"] = source
-        file_info["source_type"] = source_type
-
-        mat_data = load_mat_file(filepath, lazy=True)
+        # 解析文件
+        mat_data = data_service.load_file(local_path, lazy=True)
 
         if not mat_data:
-            if is_temp and os.path.exists(filepath):
-                os.remove(filepath)
             return jsonify({
                 "success": True,
-                "info": file_info,
+                "info": {
+                    "filename": filename,
+                    "source": source,
+                    "filepath": local_path,
+                    "size_human": size_human,
+                    "mat_version": mat_version,
+                    "num_variables": 0,
+                    "variable_names": [],
+                },
                 "summary": "该文件不包含可解析的变量",
                 "variables": [],
                 "var_overview": {},
                 "parse_time": 0,
-                "warning": "文件中没有可显示的变量",
             }), 200
 
-        summary = get_summary(mat_data)
         parse_time = time.time() - start_time
+        var_overview = build_var_overview(mat_data)
 
-        filename = file_info["filename"]
-        _cache.put(filename, {
-            "filepath": filepath,
-            "filename": filename,
-            "info": file_info,
-            "data": mat_data,
-            "summary": summary,
-            "parse_time": round(parse_time, 2),
-            "is_temp": is_temp,
-        })
-
-        var_overview = {}
-        for name, info in mat_data.items():
-            var_overview[name] = {
-                "type": info.get("type"),
-                "dtype": info.get("dtype", ""),
-                "shape": info.get("shape", []),
-                "size": info.get("size", 0),
-                "lazy": info.get("lazy", False),
-            }
+        logger.info(f"远程文件加载成功：{source}, 变量数：{len(mat_data)}")
 
         return jsonify({
             "success": True,
-            "info": file_info,
-            "summary": summary,
+            "info": {
+                "filename": filename,
+                "source": source,
+                "filepath": local_path,
+                "size_human": size_human,
+                "mat_version": mat_version,
+                "num_variables": len(mat_data),
+                "variable_names": list(mat_data.keys()),
+            },
+            "summary": f"共 {len(mat_data)} 个变量",
             "variables": list(mat_data.keys()),
             "var_overview": var_overview,
             "parse_time": round(parse_time, 2),
         })
+
     except Exception as e:
         logger.error(f"远程加载失败：{e}", exc_info=True)
         return jsonify({"error": f"加载失败：{escape_html(str(e))}"}), 500
 
 
-@app.route("/variable/<name>")
-@rate_limit(max_requests=100, window_seconds=60)  # 每分钟最多 100 次查询
+@app.route("/variable/<path:name>")
+@rate_limit(max_requests=Config.RATE_LIMIT_VARIABLE, window_seconds=60)
 def get_variable(name):
-    """获取单个变量的详细数据（支持懒加载）"""
-    # 验证变量名
-    if not validate_var_name(name):
-        logger.warning(f"无效的变量名：{name}")
-        return jsonify({"error": "无效的变量名"}), 400
+    """
+    获取变量数据
     
-    cache_data = _cache.get_current()
-    if cache_data is None:
+    Args:
+        name: 变量名（URL 编码）
+    
+    Returns:
+        JSON 响应，包含变量详细数据
+    """
+    if not validate_var_name(name):
+        return jsonify({"error": "无效的变量名"}), 400
+
+    # 获取当前缓存的文件数据
+    start_time = time.time()
+    file_data = data_service.get_current_file()
+
+    if not file_data:
         return jsonify({"error": "请先上传文件"}), 400
 
-    data = cache_data["data"]
-    if name not in data:
-        return jsonify({"error": f"变量 '{escape_html(name)}' 不存在"}), 404
+    var_data = file_data.get(name)
 
-    var_info = data[name]
+    if not var_data:
+        return jsonify({"error": f"变量不存在：{name}"}), 404
 
-    if var_info.get("lazy"):
-        start_time = time.time()
-        full_data = load_variable_data(
-            cache_data["filepath"],
-            name,
-            var_info.get("dataset_path")
-        )
-        load_time = time.time() - start_time
-        if full_data:
-            data[name] = full_data
-            var_info = full_data
-            var_info["load_time"] = round(load_time, 2)
-
-    return jsonify({"name": name, "data": var_info})
+    load_time = time.time() - start_time
+    result = var_data.to_dict()
+    result["load_time"] = round(load_time, 3)
+    
+    return jsonify(result)
 
 
-@app.route("/variable/<name>/slice")
-@rate_limit(max_requests=100, window_seconds=60)
+@app.route("/variable/<path:name>/slice")
+@rate_limit(max_requests=Config.RATE_LIMIT_VARIABLE, window_seconds=60)
 def get_variable_slice(name):
-    """获取数组切片（分页加载）"""
-    # 验证变量名
-    if not validate_var_name(name):
-        logger.warning(f"无效的变量名：{name}")
-        return jsonify({"error": "无效的变量名"}), 400
+    """
+    获取数组切片数据（用于分页显示）
     
-    cache_data = _cache.get_current()
-    if cache_data is None:
+    Args:
+        name: 变量名
+    
+    Returns:
+        JSON 响应，包含切片数据
+    """
+    if not validate_var_name(name):
+        return jsonify({"error": "无效的变量名"}), 400
+
+    # 获取分页参数
+    row_start = max(0, min(int(request.args.get("row_start", 0)), 1000000))
+    row_end = max(0, min(int(request.args.get("row_end", 1000000)), 1000000))
+    col_start = max(0, min(int(request.args.get("col_start", 0)), 1000000))
+    col_end = max(0, min(int(request.args.get("col_end", 1000000)), 1000000))
+
+    file_data = data_service.get_current_file()
+
+    if not file_data:
         return jsonify({"error": "请先上传文件"}), 400
 
-    data = cache_data["data"]
-    if name not in data:
-        return jsonify({"error": f"变量 '{escape_html(name)}' 不存在"}), 404
+    var_data = file_data.get(name)
 
-    var_info = data[name]
-    if var_info.get("lazy"):
-        full_data = load_variable_data(
-            cache_data["filepath"],
-            name,
-            var_info.get("dataset_path")
-        )
-        if full_data:
-            data[name] = full_data
-            var_info = full_data
+    if not var_data:
+        return jsonify({"error": f"变量不存在：{name}"}), 404
 
-    values = var_info.get("values")
-    if values is None:
-        return jsonify({"error": "数据不可用"}), 404
-
-    offset = request.args.get("offset", 0, type=int)
-    limit = request.args.get("limit", 1000, type=int)
-    limit = min(limit, 5000)
-
-    if isinstance(values, list):
-        sliced = values[offset:offset + limit]
-        return jsonify({
-            "name": name,
-            "offset": offset,
-            "limit": limit,
-            "total": len(values),
-            "data": sliced,
-        })
-
-    return jsonify({"error": "不支持的数据类型"}), 400
-
-
-@app.route("/variables")
-def get_all_variables():
-    """获取所有变量的概览"""
-    cache_data = _cache.get_current()
-    if cache_data is None:
-        return jsonify({"error": "请先上传文件"}), 400
-
-    data = cache_data["data"]
-    overview = {}
-    for name, info in data.items():
-        overview[name] = {
-            "type": info.get("type"),
-            "dtype": info.get("dtype", ""),
-            "shape": info.get("shape", []),
-            "size": info.get("size", 0),
-            "lazy": info.get("lazy", False),
-        }
-    return jsonify(overview)
-
-
-@app.route("/clear", methods=["POST"])
-def clear_cache():
-    """清除缓存，释放内存"""
-    _cache.clear()
-    return jsonify({"success": True, "message": "缓存已清除"})
-
-
-@app.route("/stats")
-def get_stats():
-    """获取当前缓存统计信息"""
-    cache_data = _cache.get_current()
-    if cache_data is None:
-        return jsonify({"active": False})
+    # 返回切片数据
+    if var_data.values:
+        sliced_data = var_data.values[row_start:row_end]
+        if isinstance(sliced_data[0], list):
+            sliced_data = [row[col_start:col_end] for row in sliced_data]
+    else:
+        sliced_data = []
 
     return jsonify({
-        "active": True,
-        "filename": cache_data.get("filename"),
-        "parse_time": cache_data.get("parse_time"),
-        "variables": len(cache_data.get("data", {})),
+        "data": sliced_data,
+        "row_start": row_start,
+        "row_end": row_end,
+        "col_start": col_start,
+        "col_end": col_end,
     })
 
 
-def _resolve_header(template, row_num, col_num, var_name):
-    """解析表头模板，替换占位符"""
-    if not template:
-        return None
-    result = template
-    result = result.replace("%Row_num", str(row_num))
-    result = result.replace("%Col_num", str(col_num))
-    result = result.replace("%VarName", var_name)
-    return result
-
-
-def _get_variable_values(var_info):
-    """获取变量的二维值列表"""
-    if var_info.get("lazy"):
-        return None
-    values = var_info.get("values")
-    if values is None:
-        return None
-    ndim = var_info.get("ndim", 1)
-    if ndim == 1:
-        return [[v] for v in values]
-    if ndim == 2:
-        return values
-    return None
-
-
-@app.route("/export/<name>", methods=["POST"])
-@validate_json_request([])  # 需要 JSON 但不强制要求字段
-@rate_limit(max_requests=30, window_seconds=60)  # 每分钟最多 30 次导出
+@app.route("/export/<path:name>", methods=["POST"])
+@validate_json_request(['format'])
+@rate_limit(max_requests=Config.RATE_LIMIT_EXPORT, window_seconds=60)
 def export_variable(name):
-    """导出变量数据为 CSV/Excel/TXT/NPY 格式"""
-    # 验证变量名
-    if not validate_var_name(name):
-        logger.warning(f"无效的变量名：{name}")
-        return jsonify({"error": "无效的变量名"}), 400
+    """
+    导出变量数据
     
-    cache_data = _cache.get_current()
-    if cache_data is None:
-        return jsonify({"error": "请先上传文件"}), 400
-
-    data = cache_data["data"]
-    if name not in data:
-        return jsonify({"error": f"变量 '{escape_html(name)}' 不存在"}), 404
-
-    var_info = data[name]
-    if var_info.get("lazy"):
-        full_data = load_variable_data(
-            cache_data["filepath"],
-            name,
-            var_info.get("dataset_path")
-        )
-        if full_data:
-            data[name] = full_data
-            var_info = full_data
-        else:
-            return jsonify({"error": "数据加载失败"}), 500
-
-    values = _get_variable_values(var_info)
-    if values is None:
-        return jsonify({"error": "仅支持导出 1D/2D 数组数据"}), 400
+    Args:
+        name: 变量名
+    
+    Returns:
+        文件流
+    """
+    if not validate_var_name(name):
+        return jsonify({"error": "无效的变量名"}), 400
 
     req = request.get_json() or {}
-    fmt = sanitize_string(req.get("format", "csv"), max_length=10).lower()
-    if fmt not in ["csv", "xlsx", "txt", "npy"]:
-        return jsonify({"error": "不支持的导出格式"}), 400
+    export_format = req.get("format", "csv").lower()
     
-    header_template = req.get("header", None)
-    if header_template:
-        header_template = sanitize_string(header_template, max_length=500)
-    
-    row_index_col = bool(req.get("row_index", False))
-    trim_nulls = bool(req.get("trim_nulls", False))
-    
-    # 限制数值范围，防止 DoS 攻击
+    if export_format not in Config.SUPPORTED_EXPORT_FORMATS:
+        return jsonify({"error": f"不支持的导出格式：{export_format}"}), 400
+
     try:
-        row_start = max(0, min(int(req.get("row_start", 0)), 1000000))
-        row_end = req.get("row_end", None)
-        if row_end is not None:
-            row_end = max(0, min(int(row_end), 1000000))
-        
-        col_start = max(0, min(int(req.get("col_start", 0)), 1000000))
-        col_end = req.get("col_end", None)
-        if col_end is not None:
-            col_end = max(0, min(int(col_end), 1000000))
-    except (ValueError, TypeError):
-        return jsonify({"error": "无效的参数值"}), 400
+        filepath = data_service.get_current_filepath()
 
-    if row_end is None:
-        row_end = len(values)
-    if col_end is None:
-        col_end = len(values[0]) if values else 0
+        if not filepath:
+            return jsonify({"error": "请先上传文件"}), 400
 
-    row_start = max(0, min(row_start, len(values)))
-    row_end = max(row_start, min(row_end, len(values)))
-    col_start = max(0, min(col_start, len(values[0]) if values else 0))
-    col_end = max(col_start, min(col_end, len(values[0]) if values else 0))
+        # 导出参数
+        row_start = int(req.get("row_start", 0))
+        row_end = int(req.get("row_end", 1000000))
+        col_start = int(req.get("col_start", 0))
+        col_end = int(req.get("col_end", 1000000))
+        header = req.get("header")
+        row_index = req.get("row_index", False)
+        trim_nulls = req.get("trim_nulls", False)
 
-    sliced_values = [row[col_start:col_end] for row in values[row_start:row_end]]
+        # 导出数据
+        file_data = data_service.get_current_file()
+        var_data = file_data.get(name)
 
-    if trim_nulls and sliced_values:
-        def is_null(v):
-            if v is None:
-                return True
-            if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
-                return True
-            if isinstance(v, str) and v.strip() == "":
-                return True
-            return False
+        if not var_data:
+            return jsonify({"error": f"变量不存在：{name}"}), 404
 
-        sliced_values = [
-            [None if is_null(v) else v for v in row]
-            for row in sliced_values
-        ]
+        data = var_data.values if var_data.values is not None else var_data.value
 
-        sliced_values = [
-            row for row in sliced_values
-            if any(v is not None for v in row)
-        ]
+        if data is None:
+            return jsonify({"error": "变量数据为空"}), 400
 
-        if sliced_values:
-            num_cols_temp = len(sliced_values[0])
-            cols_to_keep = []
-            for c in range(num_cols_temp):
-                has_valid = any(row[c] is not None for row in sliced_values)
-                if has_valid:
-                    cols_to_keep.append(c)
+        # 执行导出
+        exported = data_service.export_variable(
+            filepath, name, export_format,
+            header=header,
+            row_index=row_index,
+            trim_nulls=trim_nulls,
+            row_start=row_start,
+            row_end=row_end,
+            col_start=col_start,
+            col_end=col_end
+        )
 
-            if cols_to_keep:
-                sliced_values = [
-                    [row[c] for c in cols_to_keep]
-                    for row in sliced_values
-                ]
+        # 返回文件流
+        filename = f"{name}.{export_format}"
+        return send_file(
+            io.BytesIO(exported),
+            mimetype='application/octet-stream',
+            as_attachment=True,
+            download_name=filename
+        )
 
-    if not sliced_values:
-        return jsonify({"error": "导出结果为空"}), 400
-
-    num_rows = len(sliced_values)
-    num_cols = len(sliced_values[0]) if sliced_values else 0
-
-    if fmt == "npy":
-        arr = np.array(sliced_values, dtype=np.float64)
-        buf = io.BytesIO()
-        np.save(buf, arr)
-        buf.seek(0)
-        return send_file(buf, mimetype="application/octet-stream",
-                        as_attachment=True, download_name=f"{name}.npy")
-
-    if fmt == "mat":
-        import scipy.io
-        arr = np.array(sliced_values, dtype=np.float64)
-        buf = io.BytesIO()
-        scipy.io.savemat(buf, {name: arr}, format="5", do_compression=True)
-        buf.seek(0)
-        return send_file(buf, mimetype="application/octet-stream",
-                        as_attachment=True, download_name=f"{name}.mat")
-
-    if fmt == "txt":
-        buf = io.StringIO()
-        if header_template:
-            headers = []
-            if row_index_col:
-                headers.append(_resolve_header(header_template, 0, 0, name) or "Index")
-            for c in range(col_start, col_end):
-                h = _resolve_header(header_template, 0, c, name)
-                headers.append(h or f"Col_{c}")
-            buf.write("\t".join(headers) + "\n")
-        for r_idx, row in enumerate(sliced_values):
-            line_parts = []
-            if row_index_col:
-                actual_row = row_start + r_idx
-                line_parts.append(_resolve_header(header_template, actual_row, 0, name) or str(actual_row))
-            for v in row:
-                line_parts.append(format_export_val(v))
-            buf.write("\t".join(line_parts) + "\n")
-        buf.seek(0)
-        content = buf.getvalue()
-        return Response(content, mimetype="text/plain",
-                       headers={"Content-Disposition": f"attachment; filename={name}.txt"})
-
-    if fmt == "xlsx":
-        if not HAS_OPENPYXL:
-            return jsonify({"error": "请安装openpyxl: pip install openpyxl"}), 500
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = name[:31]
-        if header_template:
-            headers = []
-            if row_index_col:
-                headers.append(_resolve_header(header_template, 0, 0, name) or "Index")
-            for c in range(col_start, col_end):
-                h = _resolve_header(header_template, 0, c, name)
-                headers.append(h or f"Col_{c}")
-            ws.append(headers)
-        for r_idx, row in enumerate(sliced_values):
-            actual_row = row_start + r_idx
-            row_data = []
-            if row_index_col:
-                row_data.append(actual_row)
-            for v in row:
-                row_data.append(export_val(v))
-            ws.append(row_data)
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-        return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        as_attachment=True, download_name=f"{name}.xlsx")
-
-    buf = io.StringIO()
-    writer = csv.writer(buf, quoting=csv.QUOTE_MINIMAL)
-    if header_template:
-        headers = []
-        if row_index_col:
-            headers.append(_resolve_header(header_template, 0, 0, name) or "Index")
-        for c in range(col_start, col_end):
-            h = _resolve_header(header_template, 0, c, name)
-            headers.append(h or f"Col_{c}")
-        writer.writerow(headers)
-    for r_idx, row in enumerate(sliced_values):
-        actual_row = row_start + r_idx
-        csv_row = []
-        if row_index_col:
-            csv_row.append(actual_row)
-        for v in row:
-            csv_row.append(export_val(v))
-        writer.writerow(csv_row)
-    buf.seek(0)
-    content = buf.getvalue()
-    return Response(content, mimetype="text/csv",
-                   headers={"Content-Disposition": f"attachment; filename={name}.csv"})
+    except Exception as e:
+        logger.error(f"导出失败：{e}", exc_info=True)
+        return jsonify({"error": f"导出失败：{escape_html(str(e))}"}), 500
 
 
-def format_export_val(v):
-    """格式化导出值"""
-    if v is None:
-        return ""
-    if isinstance(v, float):
-        if np.isnan(v) or np.isinf(v):
-            return ""
-        return f"{v:.8g}"
-    if isinstance(v, str):
-        return v
-    return str(v)
+@app.route("/clear", methods=["POST"])
+def clear():
+    """清空缓存"""
+    data_service.clear_cache()
+    logger.info("缓存已清空")
+    return jsonify({"success": True, "message": "缓存已清空"})
 
 
-def export_val(v):
-    """导出值（用于Excel/CSV）"""
-    if v is None:
-        return ""
-    if isinstance(v, float):
-        if np.isnan(v) or np.isinf(v):
-            return ""
-        return v
-    if isinstance(v, str):
-        return v
-    return v
+@app.route("/cache/stats")
+def get_cache_stats():
+    """获取缓存统计信息"""
+    stats = data_service.get_cache_stats()
+    return jsonify(stats)
 
+
+# ==================== 错误处理 ====================
+
+@app.errorhandler(404)
+def not_found(error):
+    """404 错误处理"""
+    return jsonify({"error": "接口不存在"}), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """500 错误处理"""
+    logger.error(f"服务器内部错误：{error}")
+    return jsonify({"error": "服务器内部错误"}), 500
+
+
+# ==================== 应用启动 ====================
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000, threaded=True)
+    logger.info(f"启动 {Config.APP_NAME} v{Config.VERSION}")
+    logger.info(f"访问地址：http://{Config.HOST}:{Config.PORT}")
+    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)

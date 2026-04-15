@@ -1,0 +1,5 @@
+# 可选依赖 - 用于 SSH 远程文件加载功能
+# 如果需要使用 SSH 方式加载远程 MAT 文件，请安装此依赖
+# 安装命令：pip install -r optional-requirements.txt
+
+paramiko>=2.11.0

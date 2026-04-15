@@ -1,140 +1,133 @@
-# MAT 文件可视化工具 📊
+# MAT 文件可视化工具
 
-一个功能强大的 MATLAB .mat 文件可视化工具，支持多种数据格式和交互式可视化。
+一个基于 Flask 和 Plotly.js 的 MATLAB 数据文件（.mat）可视化工具，支持上传、解析、查看和导出 MAT 文件数据。
 
-## ✨ 特性
+## ✨ 功能特性
 
-- 🔍 **多格式支持**: 支持 MATLAB v5/v6/v7/v7.3 (.mat) 文件格式
-- 📈 **丰富可视化**: 表格、热图、曲面图、等高线图、3D 散点图等多种视图
-- 🚀 **高性能**: LRU 缓存、懒加载、内存管理、分页 API
-- 🛡️ **安全可靠**: 输入验证、XSS 防护、路径遍历防护、速率限制
-- 🎨 **美观界面**: 现代化暗色主题，响应式设计
-- 📤 **数据导出**: 支持导出为 CSV、Excel、TXT、NPY 格式
-- 🌐 **远程加载**: 支持 HTTP/HTTPS/SSH 远程文件加载
+- 📤 **文件上传** - 支持本地上传和远程加载（HTTP/HTTPS/SSH）
+- 📊 **数据可视化** - 自动识别数据类型，提供折线图、热力图、柱状图等多种视图
+- 📋 **数据表格** - 支持分页浏览和搜索
+- 📥 **数据导出** - 支持 CSV、Excel、TXT、NPY、MAT 等多种格式
+- 🔒 **安全可靠** - 完善的输入验证、XSS 防护、速率限制
+- ⚡ **性能优化** - 懒加载、LRU 缓存、分块读取
 
 ## 🚀 快速开始
 
-### 环境要求
-
-- Python 3.8+
-- Flask
-- NumPy
-- SciPy
-- h5py
-- Plotly.js (前端自动加载)
-
-### 安装依赖
+### 1. 安装依赖
 
 ```bash
-pip install flask numpy scipy h5py
+pip install -r requirements.txt
 ```
 
-可选（Excel 导出支持）：
-```bash
-pip install openpyxl
-```
-
-### 运行
+### 2. 启动应用
 
 ```bash
 python app.py
 ```
 
-访问 http://127.0.0.1:5000
+### 3. 访问应用
 
-## 📖 使用说明
+打开浏览器访问：http://127.0.0.1:5000
 
-1. **上传文件**: 点击上传区域选择 .mat 文件
-2. **查看变量**: 在左侧变量列表中选择要查看的变量
-3. **切换视图**: 使用顶部按钮切换不同的可视化视图
-4. **数据导出**: 点击导出按钮将数据保存为所需格式
+## 📦 依赖说明
 
-### 高级功能
+**核心依赖** (requirements.txt):
+- Flask >= 2.3.0
+- Werkzeug >= 2.3.0
+- NumPy >= 1.24.0
+- SciPy >= 1.10.0
+- h5py >= 3.8.0
 
-- **远程文件**: 支持加载 HTTP/HTTPS/SSH 远程文件
-- **数据采样**: 大数据集自动采样，可调节采样率
-- **交互操作**: 缩放、旋转、平移等交互功能
-- **配色方案**: 多种预设配色方案，支持自定义
+**可选依赖** (optional-requirements.txt):
+- paramiko >= 2.11.0 (SSH 远程文件加载)
+
+## 🔧 配置（可选）
+
+复制 `.env.example` 为 `.env` 并修改配置：
+
+```bash
+cp .env.example .env
+```
+
+主要配置项：
+- `SECRET_KEY`: 密钥（生产环境务必修改）
+- `HOST`: 监听地址（默认 127.0.0.1）
+- `PORT`: 监听端口（默认 5000）
+- `MAX_CONTENT_LENGTH_MB`: 最大上传文件大小（默认 500MB）
+
+## 📊 支持的文件格式
+
+- MATLAB v5/v6/v7 (.mat)
+- MATLAB v7.3 (HDF5 格式)
 
 ## 🛡️ 安全特性
 
-本项目已进行全面的安全加固：
+- ✅ 文件名和变量名白名单验证
+- ✅ 路径遍历防护
+- ✅ XSS 攻击防护
+- ✅ 文件上传大小限制
+- ✅ 速率限制（防滥用）
+- ✅ 上传目录隔离
 
-- ✅ 输入验证：所有用户输入都经过严格验证
-- ✅ XSS 防护：HTML 转义和输入清理
-- ✅ 路径遍历防护：安全的文件路径处理
-- ✅ 速率限制：防止暴力攻击和 DoS
-- ✅ 文件大小限制：防止资源耗尽
+## 📝 使用说明
 
-运行安全测试：
-```bash
-python test_security.py
-```
+1. **上传文件**: 拖拽 .mat 文件或点击选择文件
+2. **查看变量**: 点击左侧变量列表查看数据
+3. **切换视图**: 根据数据类型自动提供多种视图选项
+4. **导出数据**: 点击导出按钮选择格式下载
 
 ## 📁 项目结构
 
 ```
 pro/
-├── app.py                 # Flask 主应用
-├── security.py            # 安全工具模块
-├── mat_parser.py          # MAT 文件解析器
-├── file_loader.py         # 文件加载器
-├── json_utils.py          # JSON 工具函数
-├── test_security.py       # 安全测试套件
-├── templates/
-│   └── index.html         # 前端页面
-├── test_files/            # 测试文件
-└── SECURITY_REPORT.md     # 安全报告文档
+├── app.py                      # 主应用入口
+├── requirements.txt            # Python 依赖
+├── optional-requirements.txt   # 可选依赖
+├── .env.example                # 环境变量模板
+├── security.py                 # 安全模块
+├── file_loader.py              # 文件加载器
+├── core/                       # 核心模块
+│   ├── config.py              # 配置管理
+│   ├── parser.py              # MAT 文件解析
+│   ├── cache.py               # 缓存管理
+│   └── exporter.py            # 数据导出
+├── services/                   # 服务模块
+│   ├── file_service.py        # 文件服务
+│   └── data_service.py        # 数据服务
+└── frontend/                   # 前端资源
+    ├── html/
+    │   └── index.html
+    └── js/
+        └── app.js
 ```
 
-## 🧪 测试
+## 🔐 安全建议
 
-运行安全测试：
-```bash
-python test_security.py
-```
+1. 生产环境务必修改 `SECRET_KEY`
+2. 关闭调试模式 (`FLASK_DEBUG=False`)
+3. 使用 Nginx 反向代理
+4. 配置 HTTPS
+5. 定期更新依赖
 
-## 📊 性能优化
+## 🐛 故障排查
 
-- **LRU 缓存**: 限制内存使用，自动淘汰旧数据
-- **懒加载**: 大文件仅解析元数据，按需加载
-- **向量化**: 使用 NumPy 向量化操作提升性能
-- **分页显示**: 避免一次性加载大量数据
+**上传失败**:
+- 检查文件大小是否超过限制
+- 确认文件为有效的 .mat 格式
 
-## 📝 API 文档
-
-### 主要端点
-
-- `POST /upload` - 上传 .mat 文件
-- `POST /load_remote` - 加载远程文件
-- `GET /variable/<name>` - 获取变量数据
-- `GET /variable/<name>/slice` - 获取数组切片
-- `POST /export/<name>` - 导出变量数据
-- `POST /clear` - 清除缓存
-
-## 🔒 安全建议
-
-生产环境部署时建议：
-
-1. 启用 HTTPS
-2. 配置防火墙
-3. 设置合适的文件上传大小限制
-4. 定期更新依赖库
-5. 启用访问日志记录
+**SSH 连接失败**:
+- 安装可选依赖：`pip install -r optional-requirements.txt`
+- 检查 SSH 地址格式：`ssh://user@host:port/path/to/file.mat`
 
 ## 📄 许可证
 
 MIT License
 
-## 🤝 贡献
+## 👥 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
-## 📞 联系方式
-
-如有问题或建议，请提交 Issue。
-
 ---
 
-**版本**: v1.0 (安全增强版)  
-**更新时间**: 2026-04-03
+**版本**: v2.0.0  
+**最后更新**: 2026-04-12

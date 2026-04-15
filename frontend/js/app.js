@@ -1,656 +1,13 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>.mat 文件可视化工具</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>
-    <style>
-        :root {
-            --bg: #0f172a;
-            --surface: #1e293b;
-            --surface2: #253348;
-            --border: #334155;
-            --text: #e2e8f0;
-            --text-dim: #94a3b8;
-            --accent: #38bdf8;
-            --accent2: #a78bfa;
-            --success: #4ade80;
-            --danger: #f87171;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: var(--bg); color: var(--text); min-height: 100vh;
-        }
-        .container { max-width: 1440px; margin: 0 auto; padding: 20px; }
-        header { text-align: center; padding: 30px 0 10px; }
-        header h1 {
-            font-size: 2rem;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        header p { color: var(--text-dim); margin-top: 8px; font-size: .95rem; }
-        .upload-zone {
-            border: 2px dashed var(--border); border-radius: 16px;
-            padding: 50px 20px; text-align: center; cursor: pointer;
-            transition: all .3s; background: var(--surface); margin: 24px 0;
-        }
-        .upload-zone:hover, .upload-zone.dragover {
-            border-color: var(--accent); background: rgba(56,189,248,0.05);
-        }
-        .upload-zone .icon { font-size: 3rem; margin-bottom: 12px; }
-        .upload-zone p { color: var(--text-dim); }
-        .loading {
-            display: inline-block; width: 22px; height: 22px;
-            border: 2px solid var(--border); border-top-color: var(--accent);
-            border-radius: 50%; animation: spin .7s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .progress-bar {
-            width: 100%; height: 4px; background: var(--surface2);
-            border-radius: 2px; overflow: hidden; margin: 12px 0;
-        }
-        .progress-bar .fill {
-            height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
-            transition: width .3s; width: 0%;
-        }
-        .file-info {
-            background: var(--surface); border-radius: 12px;
-            padding: 20px 24px; margin: 20px 0; display: none;
-        }
-        .file-info.show { display: block; }
-        .file-info h3 { color: var(--accent); margin-bottom: 12px; }
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 12px;
-        }
-        .info-item {
-            background: rgba(255,255,255,0.03); padding: 12px 16px; border-radius: 8px;
-            position: relative;
-        }
-        .info-item .label { color: var(--text-dim); font-size: .8rem; margin-bottom: 2px; }
-        .info-item .value { font-size: 1rem; font-weight: 600; word-break: break-all; }
-        .info-item .copy-btn {
-            position: absolute; top: 8px; right: 8px;
-            width: 24px; height: 24px; border-radius: 4px;
-            background: rgba(148,163,184,0.15); color: var(--text-dim);
-            border: 1px solid rgba(148,163,184,0.2); cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            font-size: .75rem; opacity: 0; transition: all .2s;
-            pointer-events: none;
-        }
-        .info-item:hover .copy-btn {
-            opacity: 1; pointer-events: auto;
-        }
-        .info-item .copy-btn:hover {
-            background: rgba(148,163,184,0.3); color: var(--text);
-        }
-        .info-item .copy-btn.copied {
-            background: rgba(34,197,94,0.3); color: #22c55e; border-color: rgba(34,197,94,0.4);
-        }
-        .info-item.vars-item {
-            grid-column: 1 / -1;
-        }
-        .info-item .tooltip {
-            position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
-            background: rgba(15,23,42,0.95); color: #e2e8f0; padding: 8px 12px;
-            border-radius: 6px; font-size: .75rem; white-space: nowrap;
-            opacity: 0; pointer-events: none; transition: opacity .2s;
-            z-index: 1000; max-width: 400px; overflow: hidden; text-overflow: ellipsis;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-        .info-item .tooltip::after {
-            content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-            border: 6px solid transparent; border-top-color: rgba(15,23,42,0.95);
-        }
-        .info-item:hover .tooltip { opacity: 1; }
-        .main-layout {
-            display: grid; grid-template-columns: 280px 1fr;
-            gap: 20px; margin-top: 20px; transition: grid-template-columns .3s;
-            align-items: start;
-        }
-        .main-layout.sidebar-collapsed { grid-template-columns: 52px 1fr; }
-        .sidebar {
-            background: var(--surface); border-radius: 12px; padding: 18px;
-            max-height: calc(100vh - 40px); overflow-y: auto; overflow-x: hidden;
-            position: sticky; top: 20px; height: fit-content;
-            transition: all .3s; min-width: 0;
-            scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-        }
-        .sidebar::-webkit-scrollbar { width: 6px; }
-        .sidebar::-webkit-scrollbar-track { background: transparent; }
-        .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-        .sidebar.collapsed {
-            padding: 12px 6px; max-height: calc(100vh - 40px);
-        }
-        .sidebar-toggle {
-            position: absolute; right: -10px;
-            width: 20px; height: 20px; border-radius: 50%;
-            background: rgba(148,163,184,0.25); color: rgba(148,163,184,0.6);
-            border: 1px solid rgba(148,163,184,0.15); cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            font-size: .6rem; z-index: 100; transition: all .2s;
-            backdrop-filter: blur(4px);
-        }
-        .sidebar-toggle:hover {
-            background: rgba(56,189,248,0.3); color: var(--accent);
-            border-color: rgba(56,189,248,0.3);
-        }
-        .sidebar.collapsed h3 { display: none; }
-        .sidebar.collapsed .var-item {
-            padding: 8px 4px; justify-content: center; min-width: 0;
-        }
-        .sidebar.collapsed .var-item .badge,
-        .sidebar.collapsed .var-item .lazy-badge { display: none; }
-        .sidebar.collapsed .var-item.active {
-            border-left: none; border-radius: 8px;
-            background: rgba(56,189,248,0.25);
-        }
-        .sidebar h3 { color: var(--accent); margin-bottom: 14px; font-size: .95rem; }
-        .var-list { list-style: none; }
-        .var-item {
-            padding: 10px 14px; border-radius: 8px; cursor: pointer;
-            transition: background .2s; margin-bottom: 4px;
-            display: flex; justify-content: space-between; align-items: center;
-            position: relative;
-        }
-        .var-item:hover { background: rgba(255,255,255,0.06); }
-        .var-item.active {
-            background: rgba(56,189,248,0.15); border-left: 3px solid var(--accent);
-        }
-        .var-item .name { font-weight: 600; font-size: .9rem; }
-        .var-item .name-collapsed {
-            display: none; font-weight: 600; font-size: .75rem;
-            width: 28px; height: 28px; border-radius: 50%;
-            align-items: center; justify-content: center;
-        }
-        .sidebar.collapsed .var-item .name { display: none; }
-        .sidebar.collapsed .var-item .name-collapsed { display: flex; }
-        .var-item .badge {
-            font-size: .65rem; padding: 2px 8px; border-radius: 10px;
-            background: rgba(167,139,250,0.15); color: var(--accent2); white-space: nowrap;
-        }
-        .var-item .lazy-badge {
-            font-size: .6rem; padding: 1px 6px; border-radius: 8px;
-            background: rgba(251,191,36,0.2); color: #fbbf24; margin-left: 4px;
-            font-weight: 600; text-shadow: 0 0 1px rgba(251,191,36,0.5);
-        }
-        .var-list { overflow-x: hidden; }
-        .content-area {
-            background: var(--surface); border-radius: 12px;
-            padding: 24px; min-height: 500px; transition: all .3s;
-            overflow: visible;
-        }
-        .content-area.expanded { padding: 16px; }
-        .upload-zone {
-            border: 2px dashed var(--border); border-radius: 16px;
-            padding: 50px 20px; text-align: center; cursor: pointer;
-            transition: all .3s; background: var(--surface); margin: 24px 0;
-        }
-        .upload-zone.compact {
-            padding: 10px 12px; margin: 8px 0;
-            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-        }
-        .upload-zone.compact .upload-tabs { display: none; }
-        .upload-zone.compact #localUpload { display: inline-flex; align-items: center; gap: 6px; }
-        .upload-zone.compact #localUpload .icon { font-size: 1.2rem; margin-bottom: 0; }
-        .upload-zone.compact #localUpload p { font-size: .8rem; margin: 0; }
-        .upload-zone.compact .remote-form {
-            display: none !important; margin: 0; padding: 0;
-        }
-        .upload-zone.compact .remote-form.active {
-            display: flex !important; align-items: center; gap: 6px; flex: 1;
-        }
-        .upload-zone.compact .remote-form input {
-            width: auto; flex: 1; padding: 6px 10px; margin: 0; font-size: .8rem;
-            border-radius: 6px;
-        }
-        .upload-zone.compact .remote-form textarea { display: none; }
-        .upload-zone.compact .remote-form .btn {
-            width: auto; padding: 6px 14px; font-size: .8rem; margin: 0;
-            border-radius: 6px; white-space: nowrap;
-        }
-        .upload-zone.compact .remote-form .hint { display: none; }
-        .upload-zone.compact .compact-switcher {
-            display: inline-flex; gap: 4px; margin-left: auto;
-        }
-        .upload-zone.compact .compact-switcher .btn {
-            padding: 5px 10px; font-size: .75rem; border-radius: 6px;
-        }
-        .upload-zone.compact .compact-switcher .btn.active {
-            background: var(--accent); color: var(--bg); border-color: var(--accent);
-        }
-        .file-info {
-            background: var(--surface); border-radius: 12px;
-            padding: 20px 24px; margin: 20px 0; display: none;
-            transition: all .3s;
-        }
-        .file-info.compact { padding: 12px 16px; margin: 10px 0; }
-        .file-info.compact h3 { font-size: .9rem; margin-bottom: 8px; }
-        .file-info.compact .info-item { padding: 8px 12px; }
-        .file-info.compact .info-item .label { font-size: .7rem; }
-        .file-info.compact .info-item .value { font-size: .85rem; }
-        .placeholder {
-            display: flex; align-items: center; justify-content: center;
-            height: 400px; color: var(--text-dim); font-size: 1.05rem;
-            flex-direction: column; gap: 12px;
-        }
-        .site-footer {
-            margin-top: 40px; padding: 20px 0;
-            border-top: 1px solid var(--border);
-            text-align: center; color: var(--text-dim); font-size: .8rem;
-        }
-        .site-footer a {
-            color: var(--accent); text-decoration: none;
-        }
-        .site-footer a:hover {
-            text-decoration: underline;
-        }
-        .site-footer .footer-info {
-            display: flex; justify-content: center; align-items: center;
-            gap: 16px; flex-wrap: wrap;
-        }
-        .site-footer .footer-sep {
-            color: var(--border);
-        }
-        .plot-container { width: 100%; min-height: 450px; }
-        .data-table-wrap {
-            overflow: auto; max-height: 500px; margin-top: 16px;
-            border-radius: 8px; border: 1px solid var(--border);
-            position: relative;
-        }
-        table { border-collapse: collapse; font-size: .85rem; min-width: 100%; }
-        th, td {
-            padding: 6px 10px; text-align: right;
-            border-bottom: 1px solid var(--border); white-space: nowrap;
-            max-width: 150px; overflow: hidden; text-overflow: ellipsis;
-        }
-        th {
-            position: sticky; top: 0; background: var(--surface2);
-            color: var(--accent); font-weight: 600; z-index: 2;
-        }
-        td:first-child, th:first-child {
-            position: sticky; left: 0; background: var(--surface2);
-            z-index: 3; color: var(--text-dim); text-align: right;
-            min-width: 60px;
-        }
-        th:first-child { z-index: 4; }
-        tr:hover td { background: rgba(255,255,255,0.03); }
-        .var-detail { margin-bottom: 16px; }
-        .var-detail h2 { color: var(--accent); margin-bottom: 4px; font-size: 1.3rem; }
-        .var-meta { color: var(--text-dim); font-size: .85rem; }
-        .controls {
-            display: flex; gap: 8px; margin: 14px 0 18px; flex-wrap: wrap;
-        }
-        .btn {
-            padding: 7px 16px; border-radius: 8px; border: 1px solid var(--border);
-            background: transparent; color: var(--text); cursor: pointer;
-            font-size: .82rem; transition: all .2s;
-        }
-        .btn:hover { background: rgba(255,255,255,0.08); border-color: var(--text-dim); }
-        .btn.active {
-            background: var(--accent); color: var(--bg);
-            border-color: var(--accent); font-weight: 600;
-        }
-        .struct-field {
-            background: rgba(255,255,255,0.03); border-radius: 8px;
-            padding: 14px; margin-bottom: 8px; border: 1px solid var(--border);
-        }
-        .struct-field .field-name {
-            color: var(--accent2); font-weight: 600; margin-bottom: 6px; font-size: .95rem;
-        }
-        .struct-field .field-info { color: var(--text-dim); font-size: .82rem; }
-        .struct-field .field-value { margin-top: 6px; font-size: .9rem; }
-        .text-block {
-            background: rgba(0,0,0,.25); padding: 18px; border-radius: 8px;
-            white-space: pre-wrap; word-break: break-all; font-size: .92rem;
-            line-height: 1.6; border: 1px solid var(--border);
-            max-height: 500px; overflow-y: auto;
-        }
-        .json-block {
-            background: rgba(0,0,0,.25); padding: 18px; border-radius: 8px;
-            white-space: pre-wrap; word-break: break-all; font-size: .82rem;
-            line-height: 1.5; border: 1px solid var(--border);
-            max-height: 600px; overflow-y: auto;
-            font-family: 'Fira Code', 'Consolas', monospace;
-        }
-        .pagination {
-            display: flex; gap: 8px; align-items: center;
-            margin-top: 12px; justify-content: center;
-        }
-        .pagination .btn { padding: 5px 12px; }
-        .pagination .page-info { color: var(--text-dim); font-size: .8rem; }
-        .status-bar {
-            background: var(--surface2); padding: 8px 16px; border-radius: 8px;
-            margin-top: 12px; font-size: .8rem; color: var(--text-dim);
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .table-controls {
-            display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
-            align-items: center; padding: 12px; background: var(--surface2);
-            border-radius: 8px;
-        }
-        .plot-controls {
-            display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
-            align-items: center; padding: 12px; background: var(--surface2);
-            border-radius: 8px;
-        }
-        .plot-controls .control-group {
-            display: flex; align-items: center; gap: 6px;
-        }
-        .plot-controls label {
-            font-size: .8rem; color: var(--text-dim); white-space: nowrap;
-        }
-        .plot-controls select, .plot-controls input {
-            padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border);
-            background: var(--surface); color: var(--text); font-size: .8rem;
-        }
-        .plot-controls select { min-width: 100px; }
-        .plot-controls input { width: 80px; }
-        .plot-controls .color-actions {
-            display: flex; align-items: center; gap: 6px; margin-left: 4px;
-        }
-        .plot-controls .color-actions label {
-            margin-left: 0; color: var(--text-dim); font-size: .75rem;
-        }
-        .plot-controls .color-actions select {
-            min-width: 70px; font-size: .75rem; padding: 4px 8px;
-        }
-        .plot-controls .color-actions .btn {
-            padding: 4px 8px; font-size: .75rem;
-        }
-        #plotCanvas { min-height: 500px; position: relative; }
-        .btn-fs-plot {
-            position: absolute; bottom: 12px; right: 12px; z-index: 100;
-            padding: 6px 12px; font-size: .8rem; opacity: 0.6;
-            transition: opacity 0.2s;
-        }
-        .btn-fs-plot:hover { opacity: 1; }
-        .plot-zoom-controls {
-            position: absolute; top: 12px; left: 12px; z-index: 100;
-            display: flex; align-items: center; gap: 4px;
-            background: rgba(15,23,42,0.7); padding: 4px 8px;
-            border-radius: 6px; backdrop-filter: blur(4px);
-            opacity: 0; transition: opacity 0.3s;
-        }
-        .plot-canvas-wrapper:hover .plot-zoom-controls { opacity: 1; }
-        .btn-sm { padding: 4px 8px !important; font-size: .75rem !important; }
-        .plot-canvas-wrapper {
-            min-height: 500px; position: relative;
-            display: flex; flex-direction: column;
-            overflow: hidden;
-        }
-        .plot-scroll-container {
-            flex: 1; min-height: 0;
-            overflow: auto;
-            position: relative;
-        }
-        .plot-scroll-content {
-            position: relative;
-            min-height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .plot-status-bar {
-            display: flex !important; align-items: center; justify-content: center;
-            gap: 16px; margin-top: 8px; padding: 4px 8px; font-size: .8rem; color: var(--text-dim);
-            flex-shrink: 0; min-width: 0; width: auto; white-space: nowrap;
-            position: relative;
-        }
-        .plot-status-bar > * {
-            flex-shrink: 0; white-space: nowrap;
-        }
-        #plotInnerCanvas { width: 100%; height: 100%; }
-        .plot-transform-wrapper {
-            position: relative;
-            transform-origin: center center;
-        }
-        .plot-content-area {
-            width: 100%; height: 100%;
-            overflow: visible;
-        }
-        .plot-content-area .js-plotly-plot { overflow: visible; position: relative; }
-        .plot-canvas-wrapper .modebar-container {
-            position: absolute !important; top: 8px !important; right: 8px !important; z-index: 100;
-            background: transparent !important;
-        }
-        .plot-canvas-wrapper .modebar-container:hover { opacity: 1 !important; }
-        .plot-content-area .legend {
-            z-index: 99;
-            background: rgba(15,23,42,0.8) !important;
-            border-radius: 6px !important;
-        }
-        .plot-timer {
-            font-family: monospace; color: var(--accent);
-        }
-        .plot-divider { color: var(--border); }
-        .table-controls .control-group {
-            display: flex; gap: 6px; align-items: center;
-        }
-        .table-controls label {
-            color: var(--text-dim); font-size: .8rem; white-space: nowrap;
-        }
-        .table-controls input[type="number"],
-        .table-controls input[type="text"] {
-            width: 80px; padding: 4px 8px; border-radius: 6px;
-            border: 1px solid var(--border); background: var(--bg);
-            color: var(--text); font-size: .8rem;
-        }
-        .table-controls input[type="text"] { width: 120px; }
-        .slider-container {
-            display: flex; gap: 8px; align-items: center;
-            margin: 8px 0; padding: 8px 12px;
-            background: rgba(0,0,0,0.2); border-radius: 6px;
-        }
-        .slider-container label {
-            color: var(--text-dim); font-size: .75rem; white-space: nowrap;
-            min-width: 60px;
-        }
-        .slider-container input[type="range"] {
-            flex: 1; height: 4px; cursor: pointer;
-        }
-        .slider-container .slider-value {
-            color: var(--accent); font-size: .75rem;
-            min-width: 80px; text-align: right;
-        }
-        .search-results {
-            background: rgba(74,222,128,0.1); border: 1px solid var(--success);
-            border-radius: 6px; padding: 8px 12px; margin: 8px 0;
-            font-size: .8rem; color: var(--success);
-        }
-        .search-results .result-item {
-            cursor: pointer; padding: 2px 4px; border-radius: 4px;
-        }
-        .search-results .result-item:hover {
-            background: rgba(74,222,128,0.2);
-        }
-        .highlight-cell {
-            background: rgba(251,191,36,0.3) !important;
-            border: 1px solid #fbbf24;
-        }
-        .cell-view { padding: 12px; }
-        .cell-list, .cell-grid { display: flex; flex-direction: column; gap: 8px; }
-        .cell-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-        .cell-item {
-            background: var(--surface2); border-radius: 8px; padding: 10px 14px;
-            border: 1px solid var(--border); display: flex; align-items: center; gap: 10px;
-        }
-        .cell-index {
-            font-weight: 700; color: var(--accent); font-size: .85rem;
-            min-width: 35px; text-align: center;
-        }
-        .cell-content { flex: 1; overflow: hidden; }
-        .cell-scalar { color: var(--text); font-family: monospace; }
-        .cell-string { color: var(--success); font-family: monospace; }
-        .cell-ndarray { color: var(--accent2); font-family: monospace; font-size: .8rem; }
-        .cell-struct { color: #f472b6; font-family: monospace; font-size: .8rem; }
-        .cell-cell { color: #fb923c; font-family: monospace; font-size: .8rem; }
-        .cell-unknown { color: var(--text-dim); font-family: monospace; font-size: .8rem; }
-        .export-panel {
-            background: var(--surface2); border-radius: 8px; padding: 16px;
-            margin-top: 12px; border: 1px solid var(--border);
-        }
-        .export-panel h4 {
-            color: var(--accent); margin-bottom: 12px; font-size: .9rem;
-        }
-        .export-options {
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 12px; margin-bottom: 12px;
-        }
-        .export-option {
-            display: flex; flex-direction: column; gap: 4px;
-        }
-        .export-option label {
-            color: var(--text-dim); font-size: .75rem;
-        }
-        .export-option select,
-        .export-option input[type="text"],
-        .export-option input[type="number"] {
-            padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
-            background: var(--bg); color: var(--text); font-size: .8rem;
-        }
-        .export-option input[type="checkbox"] {
-            margin-right: 6px;
-        }
-        .export-btns {
-            display: flex; gap: 8px; flex-wrap: wrap;
-        }
-        .export-btn {
-            padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border);
-            background: transparent; color: var(--text); cursor: pointer;
-            font-size: .82rem; transition: all .2s; display: flex; align-items: center; gap: 6px;
-        }
-        .export-btn:hover { background: rgba(56,189,248,0.15); border-color: var(--accent); }
-        .export-btn.csv { border-color: #4ade80; color: #4ade80; }
-        .export-btn.csv:hover { background: rgba(74,222,128,0.15); }
-        .export-btn.xlsx { border-color: #38bdf8; color: #38bdf8; }
-        .export-btn.xlsx:hover { background: rgba(56,189,248,0.15); }
-        .export-btn.txt { border-color: #a78bfa; color: #a78bfa; }
-        .export-btn.txt:hover { background: rgba(167,139,250,0.15); }
-        .export-btn.npy { border-color: #fbbf24; color: #fbbf24; }
-        .export-btn.npy:hover { background: rgba(251,191,36,0.15); }
-        .export-btn.mat { border-color: #a78bfa; color: #a78bfa; }
-        .export-btn.mat:hover { background: rgba(167,139,250,0.15); }
-        .export-hint {
-            color: var(--text-dim); font-size: .7rem; margin-top: 8px;
-            padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;
-        }
-        .export-hint code {
-            color: var(--accent2); background: rgba(167,139,250,0.1);
-            padding: 1px 4px; border-radius: 3px;
-        }
-        .upload-tabs {
-            display: flex; gap: 8px; margin-bottom: 16px;
-        }
-        .upload-tab {
-            flex: 1; padding: 10px 16px; border: none; border-radius: 8px;
-            background: rgba(255,255,255,0.05); color: var(--text-dim);
-            cursor: pointer; transition: all .2s; font-size: .9rem;
-        }
-        .upload-tab.active {
-            background: var(--accent); color: var(--bg);
-        }
-        .upload-tab:hover:not(.active) {
-            background: rgba(255,255,255,0.1);
-        }
-        .remote-form {
-            display: none; margin-top: 16px;
-        }
-        .remote-form.active {
-            display: block;
-        }
-        .remote-form input, .remote-form textarea {
-            width: 100%; padding: 12px 16px; border: 1px solid var(--border);
-            border-radius: 8px; background: rgba(255,255,255,0.05);
-            color: var(--text); font-size: .9rem; margin-bottom: 12px;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-        .remote-form input:focus, .remote-form textarea:focus {
-            outline: none; border-color: var(--accent);
-        }
-        .remote-form textarea {
-            min-height: 60px; resize: vertical;
-        }
-        .remote-form .btn {
-            width: 100%; padding: 12px 24px; border: none; border-radius: 8px;
-            background: var(--accent); color: var(--bg); font-size: .95rem;
-            cursor: pointer; transition: all .2s; font-weight: 600;
-        }
-        .remote-form .btn:hover {
-            transform: translateY(-1px); box-shadow: 0 4px 12px rgba(56,189,248,0.3);
-        }
-        .remote-form .btn:disabled {
-            opacity: 0.5; cursor: not-allowed; transform: none;
-        }
-        .remote-form .hint {
-            font-size: .75rem; color: var(--text-dim); margin-top: 8px;
-            padding: 8px; background: rgba(0,0,0,0.2); border-radius: 6px;
-        }
-        @media (max-width: 860px) {
-            .main-layout { grid-template-columns: 1fr; }
-            .sidebar { position: static; max-height: none; top: 0; }
-        }
-    </style>
-</head>
-<body>
-<div class="container">
-    <header>
-        <h1>.mat 文件可视化工具</h1>
-        <p>上传 MATLAB <code>.mat</code> 文件，交互式浏览变量、绘制图表</p>
-    </header>
-    <div class="upload-zone" id="uploadZone">
-        <div class="upload-tabs">
-            <button class="upload-tab active" data-mode="local">📁 本地文件</button>
-            <button class="upload-tab" data-mode="remote">🌐 远程文件</button>
-        </div>
-        <div id="localUpload">
-            <div class="icon">📁</div>
-            <p>拖拽 <strong>.mat</strong> 文件到此处，或 <strong style="color:var(--accent)">点击选择文件</strong></p>
-        </div>
-        <div class="remote-form" id="remoteForm">
-            <input type="text" id="remoteUrl" placeholder="HTTP/HTTPS URL 或 SSH路径 (ssh://user@host:port/path/to/file.mat)" />
-            <textarea id="sshPassword" placeholder="SSH密码（可选，SSH方式需要）"></textarea>
-            <button class="btn" id="loadRemoteBtn">加载远程文件</button>
-            <div class="hint">
-                <strong>支持格式：</strong><br>
-                • HTTP/HTTPS: https://example.com/data.mat<br>
-                • SSH: ssh://user@host:22/path/to/file.mat
-            </div>
-        </div>
-        <div class="compact-switcher" id="compactSwitcher" style="display:none;">
-            <button class="btn active" data-mode="local">📁 本地</button>
-            <button class="btn" data-mode="remote">🌐 远程</button>
-        </div>
-    </div>
-    <div class="progress-bar" id="progressBar" style="display:none;">
-        <div class="fill" id="progressFill"></div>
-    </div>
-    <div class="file-info" id="fileInfo">
-        <h3>📋 文件信息</h3>
-        <div class="info-grid" id="infoGrid"></div>
-    </div>
-    <div class="main-layout" id="mainLayout" style="display:none;">
-        <div class="sidebar" id="sidebar">
-            <button class="sidebar-toggle" id="sidebarToggle" title="折叠/展开变量列表">◀</button>
-            <h3>📦 变量列表</h3>
-            <ul class="var-list" id="varList"></ul>
-        </div>
-        <div class="content-area" id="contentArea">
-            <div class="placeholder">
-                <span style="font-size:2rem">👈</span>
-                <span>选择左侧变量进行可视化</span>
-            </div>
-        </div>
-    </div>
-</div>
+/**
+ * MAT 文件可视化工具 - 主应用模块
+ * 
+ * @version 2.0.0
+ * @author MAT Visualizer Team
+ */
 
-<script>
-(function() {
+'use strict';
+
+document.addEventListener('DOMContentLoaded', function() {
     "use strict";
 
     var uploadZone  = document.getElementById("uploadZone");
@@ -767,41 +124,72 @@
             alert("请输入远程文件地址");
             return;
         }
-        loadRemoteFile(url, sshPassword.value.trim());
+        var password = sshPassword.value.trim();
+        if (url.toLowerCase().indexOf("ssh") === 0 && !password) {
+            alert("SSH 方式需要输入密码");
+            sshPassword.focus();
+            return;
+        }
+        loadRemoteFile(url, password);
     });
 
-    function loadRemoteFile(url, password) {
-        if (isUploading) { alert("文件正在加载中，请稍候"); return; }
-        isUploading = true;
-        loadRemoteBtn.disabled = true;
-        loadRemoteBtn.textContent = "加载中...";
-        var loadingHtml = '<div class="loading-spinner" style="text-align:center;padding:20px;"><div class="loading"></div>' +
-            '<p style="margin-top:12px;color:var(--text-dim)">正在加载 <strong>' +
-            escapeHtml(url) + '</strong>，请稍候…</p></div>';
-        var localBox = document.getElementById("localUpload");
-        if (localBox) {
-            localBox.innerHTML = loadingHtml;
-            localBox.style.display = "block";
-        } else {
-            uploadZone.innerHTML = loadingHtml;
+    function getDisplayFilename(path) {
+        if (!path) return "";
+        var cleaned = String(path).split("?")[0].split("#")[0];
+        var segments = cleaned.split(/[\\/]/);
+        return segments[segments.length - 1] || "";
+    }
+
+    function setLocalUploadContent(html, displayMode) {
+        if (!localUpload) return;
+        localUpload.innerHTML = html;
+        localUpload.style.display = displayMode || "block";
+        localUpload.style.pointerEvents = "auto";
+    }
+
+    function showLoadingInUpload(message) {
+        if (!localUpload) return;
+        localUpload.innerHTML = '<div class="loading-spinner" style="text-align:center;padding:20px;"><div class="loading"></div>' +
+            '<p style="margin-top:12px;color:var(--text-dim)">' + message + '</p></div>';
+        localUpload.style.display = "block";
+        localUpload.style.pointerEvents = "none";
+    }
+
+    function parseResponseError(response) {
+        var contentType = response.headers.get("Content-Type") || "";
+        if (contentType.indexOf("application/json") !== -1) {
+            return response.json().then(function(data) {
+                var message = data && data.error ? data.error : "请求失败";
+                throw new Error(message);
+            });
         }
-        setProgress(30);
+        return response.text().then(function(text) {
+            var message = text ? text.trim() : "";
+            throw new Error(message || ("请求失败（HTTP " + response.status + "）"));
+        });
+    }
 
-        var payload = { source: url };
-        if (password) payload.password = password;
+    function requestJson(url, options) {
+        return fetch(url, options).then(function(response) {
+            if (!response.ok) {
+                return parseResponseError(response);
+            }
+            return response.json();
+        });
+    }
 
-        fetch("/load_remote", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            setProgress(100);
-            if (data.error) { alert(data.error); resetUpload(); return; }
+    function finishLoadingState() {
+        isUploading = false;
+        loadRemoteBtn.disabled = false;
+        loadRemoteBtn.textContent = "加载远程文件";
+    }
+
+    function applyLoadedFile(data, displayName) {
+        return new Promise(function(resolve) {
+            clearCurrentData();
             setTimeout(function() {
                 progressBar.style.display = "none";
-                showFileInfo(data.info);
+                showFileInfo(data.info || {});
                 showVarList(data.variables, data.var_overview);
                 if (data.warning) {
                     contentArea.innerHTML = '<div class="placeholder"><span style="font-size:2rem">⚠️</span><span>' + escapeHtml(data.warning) + '</span></div>';
@@ -809,19 +197,42 @@
                 mainLayout.style.display = "grid";
                 uploadZone.classList.add("compact");
                 fileInfo.classList.add("compact", "show");
+                contentArea.classList.add("expanded");
                 if (compactSwitcher) compactSwitcher.style.display = "inline-flex";
                 setupCompactMode();
-                resetUploadSuccess(url.split("/").pop() || "remote_file.mat");
+                resetUploadSuccess(displayName);
+                resolve();
             }, 200);
+        });
+    }
+
+    function loadRemoteFile(url, password) {
+        if (isUploading) { alert("文件正在加载中，请稍候"); return; }
+        isUploading = true;
+        var hadFile = hasCurrentFile();
+        loadRemoteBtn.disabled = true;
+        loadRemoteBtn.textContent = "加载中...";
+        showLoadingInUpload('正在加载 <strong>' + escapeHtml(url) + '</strong>，请稍候…');
+        setProgress(30);
+
+        var payload = { source: url };
+        if (password) payload.password = password;
+
+        requestJson("/load_remote", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        })
+        .then(function(data) {
+            setProgress(100);
+            return applyLoadedFile(data, getDisplayFilename((data.info && (data.info.filename || data.info.source)) || url) || "remote_file.mat");
         })
         .catch(function(err) {
-            alert("加载失败: " + err.message);
-            resetUpload();
+            alert("加载失败：" + err.message);
+            resetUpload(hadFile);
         })
         .finally(function() {
-            isUploading = false;
-            loadRemoteBtn.disabled = false;
-            loadRemoteBtn.textContent = "加载远程文件";
+            finishLoadingState();
         });
     }
 
@@ -835,6 +246,7 @@
     }
 
     function triggerFileInput() {
+        if (isUploading) return;
         var input = document.createElement("input");
         input.type = "file";
         input.accept = ".mat";
@@ -849,75 +261,84 @@
         progressFill.style.width = pct + "%";
     }
 
+    function clearCurrentData() {
+        currentVarData = null;
+        dataCache = {};
+        tableState = { rowOffset: 0, colOffset: 0, rowLimit: 50, colLimit: 20, totalRows: 0, totalCols: 0, currentVar: null, searchResults: [], highlightCell: null };
+        activeVarIndex = -1;
+        if (varList) varList.innerHTML = "";
+        if (contentArea) contentArea.innerHTML = '<div class="placeholder"><span style="font-size:2rem">📊</span><span>选择左侧变量查看数据</span></div>';
+    }
+
     function uploadFile(file) {
         if (isUploading) { alert("文件正在解析中，请稍候"); return; }
         if (!file.name.endsWith(".mat")) { alert("请选择 .mat 文件"); return; }
         isUploading = true;
-        var loadingHtml = '<div class="loading-spinner" style="text-align:center;padding:20px;"><div class="loading"></div>' +
-            '<p style="margin-top:12px;color:var(--text-dim)">正在解析 <strong>' +
-            escapeHtml(file.name) + '</strong>，请稍候…</p></div>';
-        var localBox = document.getElementById("localUpload");
-        if (localBox) {
-            localBox.innerHTML = loadingHtml;
-            localBox.style.display = "block";
-        } else {
-            uploadZone.innerHTML = loadingHtml;
-        }
+        var hadFile = hasCurrentFile();
+        showLoadingInUpload('正在解析 <strong>' + escapeHtml(file.name) + '</strong>，请稍候…');
         setProgress(30);
 
         var fd = new FormData();
         fd.append("file", file);
         setProgress(60);
 
-        fetch("/upload", { method: "POST", body: fd })
-            .then(function(r) { return r.json(); })
+        requestJson("/upload", { method: "POST", body: fd })
             .then(function(data) {
                 setProgress(100);
-                if (data.error) { alert(data.error); resetUpload(); return; }
-                setTimeout(function() {
-                    progressBar.style.display = "none";
-                    showFileInfo(data.info);
-                    showVarList(data.variables, data.var_overview);
-                    if (data.warning) {
-                        contentArea.innerHTML = '<div class="placeholder"><span style="font-size:2rem">⚠️</span><span>' + escapeHtml(data.warning) + '</span></div>';
-                    }
-                    mainLayout.style.display = "grid";
-                    uploadZone.classList.add("compact");
-                    fileInfo.classList.add("compact");
-                    contentArea.classList.add("expanded");
-                    if (compactSwitcher) compactSwitcher.style.display = "inline-flex";
-                    setupCompactMode();
-                    resetUploadSuccess(file.name);
-                    isUploading = false;
-                }, 300);
+                return applyLoadedFile(data, file.name);
             })
             .catch(function(err) {
-                alert("上传失败: " + err);
-                resetUpload();
-                isUploading = false;
+                alert("上传失败：" + err.message);
+                resetUpload(hadFile);
+            })
+            .finally(function() {
+                finishLoadingState();
             });
     }
 
-    function resetUpload() {
+    function hasCurrentFile() {
+        return !!(currentFileName || currentFilePath || currentSourcePath);
+    }
+
+    function restoreLocalUploadContent() {
+        setLocalUploadContent(
+            '<div class="icon">📁</div>' +
+            '<p>拖拽 <strong>.mat</strong> 文件到此处，或 <strong style="color:var(--accent)">点击选择文件</strong></p>',
+            "block"
+        );
+    }
+
+    function resetUpload(showCompact) {
         progressBar.style.display = "none";
-        uploadZone.innerHTML = '<div class="icon">📁</div>' +
-            '<p>拖拽 <strong>.mat</strong> 文件到此处，或 <strong style="color:var(--accent)">点击选择文件</strong></p>';
-        uploadZone.onclick = triggerFileInput;
-        uploadZone.classList.remove("compact");
-        fileInfo.classList.remove("compact");
-        contentArea.classList.remove("expanded");
-        if (compactSwitcher) compactSwitcher.style.display = "none";
+        restoreLocalUploadContent();
+        
+        if (showCompact) {
+            uploadZone.classList.add("compact");
+            fileInfo.classList.add("compact");
+            contentArea.classList.add("expanded");
+            if (compactSwitcher) compactSwitcher.style.display = "inline-flex";
+            setupCompactMode();
+            resetUploadSuccess(currentFileName || "文件");
+        } else {
+            uploadZone.classList.remove("compact");
+            fileInfo.classList.remove("compact");
+            contentArea.classList.remove("expanded");
+            if (compactSwitcher) compactSwitcher.style.display = "none";
+            localUpload.style.display = "block";
+            remoteForm.classList.remove("active");
+            uploadTabs.forEach(function(t) { t.classList.remove("active"); });
+            var localTab = document.querySelector('.upload-tab[data-mode="local"]');
+            if (localTab) localTab.classList.add("active");
+        }
     }
 
     function resetUploadSuccess(filename) {
-        var localBox = document.getElementById("localUpload");
-        if (localBox) {
-            localBox.innerHTML = '<div class="icon" style="font-size:1.2rem;margin:0;">✅</div>' +
-                '<p style="font-size:.8rem;margin:0;color:var(--text-dim);">已加载 <strong>' + escapeHtml(filename) + '</strong> — ' +
-                '<span style="color:var(--accent);cursor:pointer;">点击更换</span></p>';
-            localBox.style.display = "inline-flex";
-            localBox.onclick = triggerFileInput;
-        }
+        setLocalUploadContent(
+            '<div class="icon" style="font-size:1.2rem;margin:0;">✅</div>' +
+            '<p style="font-size:.8rem;margin:0;color:var(--text-dim);">已加载 <strong>' + escapeHtml(filename) + '</strong> — ' +
+            '<span style="color:var(--accent);cursor:pointer;">点击更换</span></p>',
+            "inline-flex"
+        );
     }
 
     /* ==================== 文件信息 ==================== */
@@ -1094,10 +515,10 @@
                                             escapeHtml(data.error) + '</div>';
                     return;
                 }
-                data.data._varName = name;
-                currentVarData = data.data;
-                dataCache[name] = data.data;
-                renderVariable(name, data.data);
+                data._varName = name;
+                currentVarData = data;
+                dataCache[name] = data;
+                renderVariable(name, data);
             })
             .catch(function(err) {
                 contentArea.innerHTML = '<div class="placeholder" style="color:var(--danger)">' +
@@ -1211,14 +632,22 @@
     /* ==================== 工具函数 ==================== */
     function darkLayout(title) {
         return {
-            title: { text: title, font: { size: 15, color: "#94a3b8" }, y: 0.98, x: 0.5, xanchor: "center" },
             paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: "rgba(0,0,0,0.15)",
+            plot_bgcolor: "rgba(0,0,0,0)",
             font: { color: "#cbd5e1", family: "Segoe UI, system-ui, sans-serif" },
             xaxis: { gridcolor: "#334155", zerolinecolor: "#475569" },
             yaxis: { gridcolor: "#334155", zerolinecolor: "#475569" },
-            margin: { t: 50, b: 50, l: 60, r: 80 },
-            legend: { bgcolor: "rgba(0,0,0,0)", x: 1.02, y: 0.5, xanchor: "left", yanchor: "middle" }
+            margin: { t: 30, b: 50, l: 60, r: 100 },
+            legend: { 
+                bgcolor: "rgba(15,23,42,0.9)", 
+                x: 1.02, 
+                y: 0.5, 
+                xanchor: "left", 
+                yanchor: "middle",
+                bordercolor: "#334155",
+                borderwidth: 1,
+                font: { color: "#cbd5e1" }
+            }
         };
     }
 
@@ -1969,7 +1398,113 @@
         plotZoom: 1,
         plotRotation: 0,
         loadTime: 0,
+        viewportSyncTimer: null
     };
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function normalizeRotation(rotation) {
+        var normalized = rotation % 360;
+        return normalized < 0 ? normalized + 360 : normalized;
+    }
+
+    function getPlotViewportPadding() {
+        var modebarHost = document.getElementById("plotModebarHost");
+        var bottomPadding = 72;
+        if (modebarHost && modebarHost.offsetHeight) {
+            bottomPadding = Math.max(72, modebarHost.offsetHeight + 24);
+        }
+        return { top: 56, right: 24, bottom: bottomPadding, left: 24 };
+    }
+
+    function getPlotFocus(scrollContainer) {
+        if (!scrollContainer) return { x: 0.5, y: 0.5 };
+        var scrollWidth = Math.max(scrollContainer.scrollWidth, scrollContainer.clientWidth);
+        var scrollHeight = Math.max(scrollContainer.scrollHeight, scrollContainer.clientHeight);
+        return {
+            x: scrollWidth <= scrollContainer.clientWidth ? 0.5 :
+                (scrollContainer.scrollLeft + scrollContainer.clientWidth / 2) / scrollWidth,
+            y: scrollHeight <= scrollContainer.clientHeight ? 0.5 :
+                (scrollContainer.scrollTop + scrollContainer.clientHeight / 2) / scrollHeight
+        };
+    }
+
+    function restorePlotFocus(scrollContainer, focus) {
+        if (!scrollContainer || !focus) return;
+        var maxLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth);
+        var maxTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+        scrollContainer.scrollLeft = clamp(focus.x * scrollContainer.scrollWidth - scrollContainer.clientWidth / 2, 0, maxLeft);
+        scrollContainer.scrollTop = clamp(focus.y * scrollContainer.scrollHeight - scrollContainer.clientHeight / 2, 0, maxTop);
+    }
+
+    function getTransformedPlotSize(width, height) {
+        var radians = normalizeRotation(plotState.plotRotation) * Math.PI / 180;
+        var cos = Math.abs(Math.cos(radians));
+        var sin = Math.abs(Math.sin(radians));
+        return {
+            width: (width * cos + height * sin) * plotState.plotZoom,
+            height: (width * sin + height * cos) * plotState.plotZoom
+        };
+    }
+
+    function syncPlotViewport(forceCenter) {
+        var scrollContainer = document.querySelector(".plot-scroll-container");
+        var scrollContent = document.querySelector(".plot-scroll-content");
+        var transformWrapper = document.getElementById("plotTransformWrapper");
+        var innerCanvas = document.getElementById("plotInnerCanvas");
+        if (!scrollContainer || !scrollContent || !transformWrapper || !innerCanvas) return;
+
+        var plotlyPlot = innerCanvas.querySelector(".js-plotly-plot");
+        var baseWidth = Math.max(plotlyPlot ? plotlyPlot.offsetWidth : innerCanvas.offsetWidth, 320);
+        var baseHeight = Math.max(plotlyPlot ? plotlyPlot.offsetHeight : innerCanvas.offsetHeight, 240);
+        if (!baseWidth || !baseHeight) return;
+
+        var focus = forceCenter ? { x: 0.5, y: 0.5 } : getPlotFocus(scrollContainer);
+        var transformedSize = getTransformedPlotSize(baseWidth, baseHeight);
+        var padding = getPlotViewportPadding();
+        var sceneWidth = Math.max(scrollContainer.clientWidth, Math.ceil(transformedSize.width + padding.left + padding.right));
+        var sceneHeight = Math.max(scrollContainer.clientHeight, Math.ceil(transformedSize.height + padding.top + padding.bottom));
+        var usableWidth = Math.max(sceneWidth - padding.left - padding.right, baseWidth);
+        var usableHeight = Math.max(sceneHeight - padding.top - padding.bottom, baseHeight);
+
+        scrollContent.style.width = sceneWidth + "px";
+        scrollContent.style.height = sceneHeight + "px";
+
+        transformWrapper.style.position = "absolute";
+        transformWrapper.style.width = baseWidth + "px";
+        transformWrapper.style.height = baseHeight + "px";
+        transformWrapper.style.left = Math.round(padding.left + (usableWidth - baseWidth) / 2) + "px";
+        transformWrapper.style.top = Math.round(padding.top + (usableHeight - baseHeight) / 2) + "px";
+
+        innerCanvas.style.width = baseWidth + "px";
+        innerCanvas.style.height = baseHeight + "px";
+        transformWrapper.style.transformOrigin = "50% 50%";
+
+        var transform = "";
+        if (plotState.plotZoom !== 1) transform += "scale(" + plotState.plotZoom + ") ";
+        if (normalizeRotation(plotState.plotRotation) !== 0) transform += "rotate(" + normalizeRotation(plotState.plotRotation) + "deg)";
+        transformWrapper.style.transform = transform.trim();
+
+        restorePlotFocus(scrollContainer, focus);
+    }
+
+    function schedulePlotViewportSync(forceCenter) {
+        if (plotState.viewportSyncTimer) {
+            clearTimeout(plotState.viewportSyncTimer);
+        }
+        plotState.viewportSyncTimer = setTimeout(function() {
+            syncPlotViewport(forceCenter);
+            updateModebarPosition();
+            updateLegendPosition();
+            plotState.viewportSyncTimer = null;
+        }, 0);
+    }
+
+    window.addEventListener("resize", function() {
+        schedulePlotViewportSync(false);
+    });
 
     var customColorSchemes = [];
 
@@ -2074,27 +1609,74 @@
         html += '<button class="btn" id="btnPlotGotoCol">定位</button>';
         html += '<button class="btn" id="btnCancelHighlight" title="取消定位">✖ 取消</button>';
         html += '</div>';
-        html += '</div>';
-        html += '<div id="plotCanvas" class="plot-canvas-wrapper">';
-        html += '<div class="plot-zoom-controls">';
-        html += '<button class="btn btn-sm" id="btnZoomOut" title="缩小显示">➖</button>';
-        html += '<span id="plotZoomLevel" style="color:var(--text-dim);font-size:.7rem;min-width:40px;text-align:center;">100%</span>';
-        html += '<button class="btn btn-sm" id="btnZoomIn" title="放大显示">➕</button>';
-        html += '<button class="btn btn-sm" id="btnResetView" title="重置视图">🔄</button>';
-        html += '<span style="width:1px;background:var(--border);margin:0 2px;"></span>';
-        html += '<button class="btn btn-sm" id="btnRotateCCW" title="逆时针旋转90°">↶</button>';
-        html += '<button class="btn btn-sm" id="btnRotateCW" title="顺时针旋转90°">↷</button>';
-        html += '</div>';
-        html += '<div class="plot-scroll-container">';
-        html += '<div class="plot-scroll-content">';
-        html += '<div id="plotTransformWrapper" class="plot-transform-wrapper">';
-        html += '<div id="plotInnerCanvas" class="plot-content-area"></div>';
+        html += '<div class="control-group" id="performanceInfo" style="display:none;">';
+        html += '<label>性能统计:</label>';
+        html += '<span id="perfStats" style="font-size:0.75rem;color:var(--text-dim);"></span>';
         html += '</div>';
         html += '</div>';
-        html += '</div>';
-        html += '<button class="btn btn-fs-plot" id="btnFullscreenPlot" title="全屏绘图">⛶ 全屏</button>';
-        html += '</div>';
-        box.innerHTML = html;
+        
+        var plotCanvas = document.createElement('div');
+        plotCanvas.id = 'plotCanvas';
+        plotCanvas.className = 'plot-canvas-wrapper';
+        
+        var titleContainer = document.createElement('div');
+        titleContainer.className = 'plot-title-container';
+        var titleText = document.createElement('div');
+        titleText.className = 'plot-title-text';
+        titleText.textContent = '绘图';
+        titleContainer.appendChild(titleText);
+        plotCanvas.appendChild(titleContainer);
+        
+        var zoomControls = document.createElement('div');
+        zoomControls.className = 'plot-zoom-controls';
+        zoomControls.innerHTML = '<button class="btn btn-sm" id="btnZoomOut" title="缩小显示">➖</button>' +
+            '<span id="plotZoomLevel" style="color:var(--text-dim);font-size:.7rem;min-width:40px;text-align:center;">100%</span>' +
+            '<button class="btn btn-sm" id="btnZoomIn" title="放大显示">➕</button>' +
+            '<button class="btn btn-sm" id="btnResetView" title="重置视图">🔄</button>' +
+            '<span style="width:1px;background:var(--border);margin:0 2px;"></span>' +
+            '<button class="btn btn-sm" id="btnRotateCCW" title="逆时针旋转90°">↶</button>' +
+            '<button class="btn btn-sm" id="btnRotateCW" title="顺时针旋转90°">↷</button>';
+        plotCanvas.appendChild(zoomControls);
+        
+        var scrollContainer = document.createElement('div');
+        scrollContainer.className = 'plot-scroll-container';
+        var scrollContent = document.createElement('div');
+        scrollContent.className = 'plot-scroll-content';
+        var transformWrapper = document.createElement('div');
+        transformWrapper.id = 'plotTransformWrapper';
+        transformWrapper.className = 'plot-transform-wrapper';
+        var innerCanvas = document.createElement('div');
+        innerCanvas.id = 'plotInnerCanvas';
+        innerCanvas.className = 'plot-content-area';
+        
+        transformWrapper.appendChild(innerCanvas);
+        scrollContent.appendChild(transformWrapper);
+        scrollContainer.appendChild(scrollContent);
+        plotCanvas.appendChild(scrollContainer);
+
+        var overlayLayer = document.createElement('div');
+        overlayLayer.id = 'plotOverlayLayer';
+        overlayLayer.className = 'plot-overlay-layer';
+        var modebarHost = document.createElement('div');
+        modebarHost.id = 'plotModebarHost';
+        modebarHost.className = 'plot-modebar-host';
+        overlayLayer.appendChild(modebarHost);
+        plotCanvas.appendChild(overlayLayer);
+        
+        var fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'btn btn-fs-plot';
+        fullscreenBtn.id = 'btnFullscreenPlot';
+        fullscreenBtn.title = '全屏绘图';
+        fullscreenBtn.textContent = '⛶ 全屏';
+        plotCanvas.appendChild(fullscreenBtn);
+        
+        box.innerHTML = '';
+        box.appendChild(plotCanvas);
+        
+        var controlsContainer = document.createElement('div');
+        controlsContainer.className = 'plot-controls';
+        controlsContainer.innerHTML = html;
+        box.insertBefore(controlsContainer, plotCanvas);
 
         document.getElementById("plotTypeSelect").addEventListener("change", function() {
             plotState.plotType = this.value;
@@ -2171,29 +1753,76 @@
         var zoomPct = Math.round(plotState.plotZoom * 100);
         var zoomLabel = document.getElementById("plotZoomLevel");
         if (zoomLabel) zoomLabel.textContent = zoomPct + "%";
-        var transformWrapper = document.getElementById("plotTransformWrapper");
-        if (transformWrapper) {
-            var hasRotation = plotState.plotRotation !== 0;
-            var hasZoom = plotState.plotZoom !== 1;
-            if (hasRotation || hasZoom) {
-                var transform = "";
-                if (hasZoom) transform += "scale(" + plotState.plotZoom + ") ";
-                if (hasRotation) transform += "rotate(" + plotState.plotRotation + "deg)";
-                transformWrapper.style.transform = transform.trim();
-                transformWrapper.style.transformOrigin = "center top";
-            } else {
-                transformWrapper.style.transform = "";
-                transformWrapper.style.transformOrigin = "center center";
+        schedulePlotViewportSync(false);
+    }
+    
+    function updateModebarPosition() {
+        var innerCanvas = document.getElementById("plotInnerCanvas");
+        var modebarHost = document.getElementById("plotModebarHost");
+        if (!innerCanvas || !modebarHost) return;
+
+        var modebar = innerCanvas.querySelector('.modebar-container') || modebarHost.querySelector('.modebar-container');
+        if (!modebar) return;
+
+        var staleModebars = modebarHost.querySelectorAll('.modebar-container');
+        for (var j = 0; j < staleModebars.length; j++) {
+            if (staleModebars[j] !== modebar && staleModebars[j].parentNode) {
+                staleModebars[j].parentNode.removeChild(staleModebars[j]);
             }
-            
-            // 触发滚动容器重新计算
-            var scrollContainer = transformWrapper.closest('.plot-scroll-container');
-            if (scrollContainer) {
-                scrollContainer.style.overflow = 'hidden';
-                setTimeout(function() {
-                    scrollContainer.style.overflow = 'auto';
-                }, 10);
-            }
+        }
+
+        if (modebar.parentNode !== modebarHost) {
+            modebarHost.appendChild(modebar);
+        }
+
+        modebar.style.position = 'absolute';
+        modebar.style.bottom = '0';
+        modebar.style.top = 'auto';
+        modebar.style.left = '0';
+        modebar.style.right = 'auto';
+        modebar.style.width = 'auto';
+        modebar.style.height = 'auto';
+        modebar.style.zIndex = '10000';
+        modebar.style.transform = 'none';
+        modebar.style.background = 'transparent';
+        modebar.style.borderRadius = '0';
+        modebar.style.padding = '0';
+        modebar.style.boxShadow = 'none';
+        modebar.style.pointerEvents = 'none';
+
+        var modebarElements = modebar.querySelectorAll('*');
+        for (var i = 0; i < modebarElements.length; i++) {
+            modebarElements[i].style.pointerEvents = 'auto';
+        }
+    }
+    
+    function updateLegendPosition() {
+        var innerCanvas = document.getElementById("plotInnerCanvas");
+        if (!innerCanvas) return;
+        
+        var plotlyPlot = innerCanvas.querySelector('.js-plotly-plot');
+        if (!plotlyPlot) return;
+        
+        var legend = plotlyPlot.querySelector('.legend');
+        if (!legend) return;
+        
+        if (normalizeRotation(plotState.plotRotation) !== 0 || plotState.plotZoom !== 1) {
+            legend.style.position = "absolute";
+            legend.style.top = "12px";
+            legend.style.right = "12px";
+            legend.style.left = "auto";
+            legend.style.transform = "none";
+            legend.style.background = "rgba(15,23,42,0.9)";
+            legend.style.borderRadius = "6px";
+            legend.style.padding = "8px";
+            legend.style.zIndex = "999";
+        } else {
+            legend.style.position = "";
+            legend.style.top = "";
+            legend.style.right = "";
+            legend.style.left = "";
+            legend.style.transform = "";
+            legend.style.zIndex = "";
         }
     }
 
@@ -2334,14 +1963,44 @@
         }
 
         if (totalPoints > targetPoints) {
-            sampleFactor = Math.ceil(Math.sqrt(totalPoints / targetPoints));
+            if (typeof PlotOptimizer !== 'undefined') {
+                sampleFactor = PlotOptimizer.getOptimalSampleFactor(totalPoints, targetPoints);
+            } else {
+                sampleFactor = Math.ceil(Math.sqrt(totalPoints / targetPoints));
+            }
         }
 
-        var sampledValues = sampleData(values, rows, cols, sampleFactor);
+        if (typeof PlotOptimizer !== 'undefined') {
+            var validation = PlotOptimizer.validateLargeData(values, rows, cols);
+            if (!validation.valid) {
+                var statusEl = document.getElementById("plotStatus");
+                if (statusEl) {
+                    statusEl.textContent = "⚠️ " + validation.message;
+                }
+                return;
+            }
+            if (validation.warning) {
+                console.warn(validation.warning);
+            }
+        }
+
+        var sampledValues;
+        if (typeof PlotOptimizer !== 'undefined') {
+            sampledValues = PlotOptimizer.optimizedSampleData(values, rows, cols, sampleFactor);
+        } else {
+            sampledValues = sampleData(values, rows, cols, sampleFactor);
+        }
+        
         var sRows = sampledValues.length;
         var sCols = sampledValues.length > 0 ? sampledValues[0].length : 0;
 
-        var processedValues = applyInterpolation(sampledValues, sRows, sCols, plotState.interpMethod);
+        var processedValues;
+        if (plotState.interpMethod === "linear" && typeof PlotOptimizer !== 'undefined') {
+            processedValues = PlotOptimizer.fastBilinearInterpolation(sampledValues, sRows, sCols, 2);
+        } else {
+            processedValues = applyInterpolation(sampledValues, sRows, sCols, plotState.interpMethod);
+        }
+        
         var pRows = processedValues.length;
         var pCols = processedValues.length > 0 ? processedValues[0].length : 0;
 
@@ -2489,6 +2148,10 @@
         if (plotState.renderStartTime) {
             var elapsed = ((performance.now() - plotState.renderStartTime) / 1000).toFixed(2);
             statusText += " | 渲染时间: " + elapsed + "s";
+            
+            if (typeof PlotOptimizer !== 'undefined') {
+                PlotOptimizer.updatePerformanceStats(parseFloat(elapsed), pRows * pCols);
+            }
         }
         showStatus(statusText);
         if (plotState.renderTimerInterval) {
@@ -2497,16 +2160,20 @@
         }
 
         plotState.isRendering = false;
+        
+        if (typeof PlotOptimizer !== 'undefined' && pRows * pCols > 100000) {
+            PlotOptimizer.cleanupMemory();
+        }
+        
         var innerCanvas = document.getElementById("plotInnerCanvas");
-        Plotly.newPlot(innerCanvas, [trace], layout, { responsive: true, displayModeBar: true }).then(function() {
+        Plotly.newPlot(innerCanvas, [trace], layout, { 
+            responsive: true, 
+            displayModeBar: true,
+            modeBarButtonsToRemove: [],
+            displaylogo: false
+        }).then(function() {
             setTimeout(function() {
-                var plotCanvas = document.getElementById("plotCanvas");
-                var transformWrapper = document.getElementById("plotTransformWrapper");
-                if (!plotCanvas || !transformWrapper) return;
-                var modebar = innerCanvas.querySelector('.modebar-container');
-                if (modebar && !plotCanvas.contains(modebar)) {
-                    plotCanvas.appendChild(modebar);
-                }
+                schedulePlotViewportSync(true);
             }, 100);
         });
 
@@ -2518,6 +2185,18 @@
                     if (warningEl.parentNode) warningEl.parentNode.removeChild(warningEl);
                 }, 500);
             }, 3000);
+        }
+        
+        if (typeof PlotOptimizer !== 'undefined') {
+            var perfInfo = document.getElementById("performanceInfo");
+            var perfStats = document.getElementById("perfStats");
+            if (perfInfo && perfStats) {
+                var report = PlotOptimizer.getPerformanceReport();
+                perfStats.textContent = "渲染次数: " + report.renderCount + 
+                    " | 平均耗时: " + report.averageRenderTime + 
+                    " | 内存: " + report.memoryUsage;
+                perfInfo.style.display = "flex";
+            }
         }
     }
 
@@ -3031,20 +2710,9 @@
         });
     }
 
-})();
-</script>
+});
 
-<footer class="site-footer">
-    <div class="footer-info">
-        <span>© 2026 MAT Visualizer</span>
-        <span class="footer-sep">|</span>
-        <span>开源项目 · <a href="https://github.com/" target="_blank" rel="noopener">GitHub</a></span>
-        <span class="footer-sep">|</span>
-        <span id="footerTime"></span>
-    </div>
-</footer>
-
-<script>
+// ==================== 页脚时间更新 ====================
 (function() {
     function updateFooterTime() {
         var el = document.getElementById("footerTime");
@@ -3057,6 +2725,3 @@
     updateFooterTime();
     setInterval(updateFooterTime, 1000);
 })();
-</script>
-</body>
-</html>

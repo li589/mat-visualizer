@@ -50,8 +50,13 @@ test_files/*.mat
 
 # Security
 .env
+.env.example
 *.key
 *.pem
+
+# Development
+DEPLOYMENT.md
+test_files/*.mat
 
 # Coverage
 htmlcov/
