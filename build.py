@@ -12,6 +12,7 @@ MAT 文件可视化工具 - 打包脚本 v1.0
 import os
 import sys
 import shutil
+import zipfile
 import subprocess
 from datetime import datetime
 
@@ -177,6 +178,19 @@ GitHub: https://github.com/li589/mat-visualizer
 """)
     
     print(f"[OK] 已创建使用说明")
+
+    # 打包为 zip（发行版分发用）
+    zip_path = os.path.join(DIST_DIR, f'MAT_Visualizer_v{VERSION}.zip')
+    if os.path.exists(zip_path):
+        os.remove(zip_path)
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(release_dir):
+            for fn in files:
+                full = os.path.join(root, fn)
+                arc = os.path.relpath(full, DIST_DIR)
+                zf.write(full, arc)
+    print(f"[OK] 已创建发行包 zip：{zip_path}")
+
     print(f"\n发布包位置：{release_dir}")
     
     return release_dir
