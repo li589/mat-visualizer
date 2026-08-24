@@ -21,8 +21,15 @@ DIST_DIR = os.path.join(ROOT_DIR, 'dist')
 BUILD_DIR = os.path.join(ROOT_DIR, 'build')
 SPEC_FILE = os.path.join(ROOT_DIR, 'mat_visualizer.spec')
 
-# 版本号
-VERSION = "1.0"
+# 版本号（从 VERSION 文件读取，避免与仓库版本不一致）
+def get_version():
+    version_file = os.path.join(ROOT_DIR, 'VERSION')
+    if os.path.exists(version_file):
+        with open(version_file, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    return "1.0.0"
+
+VERSION = get_version()
 
 def print_step(message):
     """打印步骤信息"""
@@ -42,10 +49,15 @@ def clean_build():
         shutil.rmtree(BUILD_DIR)
         print(f"已删除 {BUILD_DIR}")
     
-    # 清理 __pycache__
+    # 清理 __pycache__（跳过虚拟环境、.git 等大型目录，避免误删 site-packages 缓存）
+    SKIP_DIRS = {'venv', '.venv', 'env', 'ENV', '.git', 'node_modules', 'dist', 'build'}
     for root, dirs, files in os.walk(ROOT_DIR):
-        if '__pycache__' in dirs:
-            shutil.rmtree(os.path.join(root, '__pycache__'))
+        for d in list(dirs):
+            if d == '__pycache__':
+                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
+                dirs.remove(d)
+            elif d in SKIP_DIRS:
+                dirs.remove(d)
     
     print("清理完成")
 
@@ -204,7 +216,7 @@ def main():
     
     print_step("打包成功!")
     print(f"[OK] 可执行文件：{os.path.join(DIST_DIR, 'MAT_Visualizer.exe')}")
-    print(f"[OK] 发布包：{os.path.join(DIST_DIR, 'MAT_Visualizer_v1.0')}")
+    print(f"[OK] 发布包：{os.path.join(DIST_DIR, 'MAT_Visualizer_v' + VERSION)}")
     print("\n提示：可以直接运行 dist/MAT_Visualizer.exe 启动应用")
 
 if __name__ == '__main__':
