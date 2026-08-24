@@ -6,7 +6,6 @@ block_cipher = None
 datas = [
     ('frontend/html', 'frontend/html'),
     ('frontend/js', 'frontend/js'),
-    ('frontend/css', 'frontend/css'),
 ]
 
 # 二进制文件包含列表

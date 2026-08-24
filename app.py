@@ -447,6 +447,7 @@ def internal_error(error):
 # ==================== 应用启动 ====================
 
 if __name__ == "__main__":
+    print("系统启动...")
     logger.info(f"启动 {Config.APP_NAME} v{Config.VERSION}")
     logger.info(f"访问地址：http://{Config.HOST}:{Config.PORT}")
     app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
