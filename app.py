@@ -15,6 +15,7 @@ MAT 文件可视化工具 - Flask 应用主入口（重构版 v2.0）
 """
 
 import os
+import sys
 import time
 import logging
 from flask import Flask, render_template, request, jsonify, send_file
@@ -446,8 +447,34 @@ def internal_error(error):
 
 # ==================== 应用启动 ====================
 
+def parse_args():
+    """
+    解析命令行参数
+
+    --no-ui / --headless / --console : 关闭图形界面，以控制台模式运行
+    --open                          : 服务就绪后自动打开浏览器
+    """
+    headless = False
+    open_browser = False
+    for arg in sys.argv[1:]:
+        if arg in ("--no-ui", "--headless", "--console"):
+            headless = True
+        elif arg == "--open":
+            open_browser = True
+        elif arg in ("-h", "--help"):
+            print(f"用法: python app.py [--no-ui] [--open]")
+            print("  --no-ui   以控制台模式运行（不显示图形界面）")
+            print("  --open    服务就绪后自动打开浏览器")
+            sys.exit(0)
+    return headless, open_browser
+
+
 if __name__ == "__main__":
-    print("系统启动...")
-    logger.info(f"启动 {Config.APP_NAME} v{Config.VERSION}")
-    logger.info(f"访问地址：http://{Config.HOST}:{Config.PORT}")
-    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
+    headless_mode, auto_open = parse_args()
+
+    logger.info(f"启动 {Config.APP_NAME}")
+
+    from core.ui import launch
+
+    # 打包版无控制台窗口，由启动器 UI 提供状态反馈；无图形环境自动回退控制台模式
+    launch(app, Config, open_browser_on_start=auto_open, headless=headless_mode)

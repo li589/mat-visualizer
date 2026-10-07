@@ -32,6 +32,11 @@ hiddenimports = [
     'werkzeug',
     'jinja2',
     'markupsafe',
+    # 启动器 UI（Tkinter）
+    'tkinter',
+    'tkinter.ttk',
+    'tkinter.messagebox',
+    'tkinter.filedialog',
 ]
 
 a = Analysis(

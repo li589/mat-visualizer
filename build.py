@@ -139,8 +139,9 @@ def create_release_package():
         shutil.copy2(src_exe, dst_exe)
         print(f"[OK] 已复制可执行文件")
     
-    # 复制 README 和 LICENSE
-    for file in ['README.md', 'LICENSE']:
+    # 复制 README、LICENSE 和 VERSION
+    # VERSION 需随 exe 一起分发：启动器 UI 从 exe 同级目录读取版本号显示在窗口标题
+    for file in ['README.md', 'LICENSE', 'VERSION']:
         src = os.path.join(ROOT_DIR, file)
         if os.path.exists(src):
             shutil.copy2(src, release_dir)
@@ -154,9 +155,10 @@ def create_release_package():
 
 启动方法:
 1. 双击运行 MAT_Visualizer.exe
-2. 在浏览器中打开 http://127.0.0.1:5000
+2. 弹出启动器窗口后，点击「打开网页」或手动访问 http://127.0.0.1:5000
 
 功能特性:
+- 启动器界面：显示服务状态、访问地址、运行时长
 - 支持本地 MAT 文件上传
 - 支持 HTTP/HTTPS 远程文件加载
 - 支持 SSH/SFTP 远程文件加载
@@ -169,9 +171,10 @@ def create_release_package():
 - 无需额外依赖
 
 注意事项:
-- 首次启动可能需要几秒钟
-- 请确保 5000 端口未被占用
-- 关闭程序请停止命令行窗口
+- 首次启动需要几秒钟解包，请稍候
+- 端口 5000 被占用时会自动切换到下一个可用端口
+- 退出程序：在启动器窗口点击「退出」按钮（关闭窗口等同于退出）
+- 运行日志：程序所在目录 logs/mat_visualizer.log
 
 技术支持:
 GitHub: https://github.com/li589/mat-visualizer
