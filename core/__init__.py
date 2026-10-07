@@ -7,6 +7,7 @@ from .cache import LRUCache, CacheManager
 from .parser import MATParser, VariableData
 from .exporter import DataExporter, ExportFormat
 from .config import Config
+from .version import read_version, get_app_dir
 
 __all__ = [
     'LRUCache',
@@ -16,4 +17,6 @@ __all__ = [
     'DataExporter',
     'ExportFormat',
     'Config',
+    'read_version',
+    'get_app_dir',
 ]

@@ -1,7 +1,7 @@
 /**
  * MAT 文件可视化工具 - 主应用模块
- * 
- * @version 2.0.0
+ *
+ * @version 以仓库根目录 VERSION 文件为准，不在此硬编码
  * @author MAT Visualizer Team
  */
 

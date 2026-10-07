@@ -32,6 +32,8 @@ import urllib.request
 import webbrowser
 from typing import Optional, Tuple
 
+from core.version import DEFAULT_VERSION, get_app_dir, read_version
+
 logger = logging.getLogger(__name__)
 
 # 存活探测用的接口（GET 返回 JSON，稳定且开销小）
@@ -46,32 +48,6 @@ _HEALTH_FAIL_TOLERANCE = 2
 
 
 # ==================== 基础工具 ====================
-
-def is_frozen() -> bool:
-    """是否运行在 PyInstaller 打包环境"""
-    return bool(getattr(sys, "frozen", False))
-
-
-def get_app_dir() -> str:
-    """获取应用工作目录：打包版为 exe 所在目录，源码模式为项目根目录"""
-    if is_frozen():
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def read_version(default: str = "1.0.0") -> str:
-    """读取 VERSION 文件中的版本号，失败则使用默认值"""
-    version_file = os.path.join(get_app_dir(), "VERSION")
-    try:
-        if os.path.exists(version_file):
-            with open(version_file, "r", encoding="utf-8") as f:
-                version = f.read().strip()
-            if version:
-                return version
-    except OSError:
-        logger.warning("读取 VERSION 文件失败：%s", version_file)
-    return default
-
 
 def setup_file_logging(app_name: str = "mat_visualizer") -> Tuple[str, str]:
     """
@@ -411,7 +387,8 @@ def launch(app, config, open_browser_on_start: bool = False,
         open_browser_on_start: 服务就绪后是否自动打开浏览器
         headless: 强制控制台模式
     """
-    version = read_version(getattr(config, "VERSION", "1.0.0"))
+    # 版本号统一来自 VERSION 文件；config.VERSION 本身即读取结果，仅作缺失时的兜底
+    version = read_version(getattr(config, "VERSION", DEFAULT_VERSION))
     log_dir, log_file = setup_file_logging()
 
     use_headless = headless or bool(os.environ.get("MAT_VIS_NO_UI"))

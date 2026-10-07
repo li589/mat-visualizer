@@ -117,6 +117,7 @@ pro/
 ├── file_loader.py              # 文件加载器
 ├── core/                       # 核心模块
 │   ├── config.py              # 配置管理
+│   ├── version.py             # 版本号单一真相源（读取 VERSION 文件）
 │   ├── parser.py              # MAT 文件解析
 │   ├── cache.py               # 缓存管理
 │   ├── exporter.py            # 数据导出

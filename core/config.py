@@ -6,13 +6,16 @@ import os
 import tempfile
 from typing import Optional
 
+from .version import read_version
+
 
 class Config:
     """应用配置类，集中管理所有配置项"""
-    
+
     # 应用配置
     APP_NAME: str = "MAT 文件可视化工具"
-    VERSION: str = "2.0.0"
+    # 版本号统一来自 VERSION 文件，避免与发布包名、启动器窗口显示不一致
+    VERSION: str = read_version()
     DEBUG: bool = False
     
     # 服务器配置

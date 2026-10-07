@@ -23,12 +23,17 @@ BUILD_DIR = os.path.join(ROOT_DIR, 'build')
 SPEC_FILE = os.path.join(ROOT_DIR, 'mat_visualizer.spec')
 
 # 版本号（从 VERSION 文件读取，避免与仓库版本不一致）
+# 打包脚本刻意不 import core.version：core 包会连带加载 numpy/scipy 等运行时依赖，
+# 打包阶段无需为此付出导入开销。此处兜底值与 core/version.py 保持一致。
 def get_version():
     version_file = os.path.join(ROOT_DIR, 'VERSION')
     if os.path.exists(version_file):
         with open(version_file, 'r', encoding='utf-8') as f:
-            return f.read().strip()
-    return "1.0.0"
+            version = f.read().strip()
+        if version:
+            return version
+    print("[WARN] 未找到有效的 VERSION 文件，发布包将标记为 v0.0.0")
+    return "0.0.0"
 
 VERSION = get_version()
 
@@ -127,8 +132,12 @@ def create_release_package():
     release_dir = os.path.join(DIST_DIR, f'MAT_Visualizer_v{VERSION}')
     if os.path.exists(release_dir):
         shutil.rmtree(release_dir)
-    
+
     os.makedirs(release_dir)
+
+    # VERSION 同时复制到 dist 根目录，使直接运行 dist/MAT_Visualizer.exe 也能读到版本号
+    # （运行时从 exe 同级目录读取，发行包内也会随附一份）
+    shutil.copy2(os.path.join(ROOT_DIR, 'VERSION'), os.path.join(DIST_DIR, 'VERSION'))
     
     # 复制可执行文件
     exe_name = 'MAT_Visualizer.exe' if sys.platform == 'win32' else 'MAT_Visualizer'
